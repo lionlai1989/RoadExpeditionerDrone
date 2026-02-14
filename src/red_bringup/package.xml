@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>red_bringup</name>
+  <version>0.0.1</version>
+  <description>Bringup files and high-level orchestration for RoadExpeditionerDrone</description>
+  <maintainer email="lionlai1989@gmail.com">Chih-An Lion Lai</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <exec_depend>red_geometric_controller</exec_depend>
+  <exec_depend>red_navigator</exec_depend>
+  <exec_depend>red_perception</exec_depend>
+  <exec_depend>red_vio_estimator</exec_depend>
+  <exec_depend>red_gz_plugin</exec_depend>
+
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_image</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
