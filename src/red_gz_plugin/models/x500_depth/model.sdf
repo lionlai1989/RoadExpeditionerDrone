@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version='1.9'>
+  <model name='x500_depth'>
+    <include merge='true'>
+      <uri>x500</uri>
+    </include>
+    <include merge='true'>
+      <uri>model://OakD-Lite</uri>
+      <pose>.12 .03 .484 0 0 0</pose>
+    </include>
+    <joint name="CameraJoint" type="fixed">
+      <parent>base_link</parent>
+      <child>camera_link</child>
+      <pose relative_to="base_link">.12 .03 .484 0 0 0</pose>
+    </joint>
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+      <dimensions>3</dimensions>
+      <!-- The odometry comes from Gazebo's gz::sim::systems::OdometryPublisher plugin. In your
+      model SDFs you only set <dimensions>, so the plugin uses its defaults. By default,
+      robot_base_frame is {model_name}/base_footprint, which is why the bridged ROS message shows
+      drone_1/base_footprint. We override it to base_link so that the bridged ROS message shows
+      drone_1/base_link. --> 
+      <robot_base_frame>base_link</robot_base_frame>
+      <xyz_offset>0 0 0</xyz_offset>
+    </plugin>
+    <plugin filename="libred_flight_interface_plugin.so" name="red::FlightInterface"/>
+    
+  </model>
+</sdf>
