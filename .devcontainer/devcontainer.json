@@ -1,0 +1,32 @@
+{
+  "name": "RoadExpeditionerDrone Dev Container",
+  "dockerComposeFile": [
+    "../docker-compose.yml"
+  ],
+  "service": "dev",
+  "workspaceFolder": "/home/lion/RoadExpeditionerDrone",
+  "shutdownAction": "stopCompose",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-vscode.cmake-tools",
+        "ms-azuretools.vscode-docker",
+        "stkb.rewrap",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        "terminal.integrated.shell.linux": "/bin/bash",
+        "clangd.path": "/usr/bin/clangd",
+        "clangd.arguments": [
+          "--compile-commands-dir=build",
+          "--background-index"
+        ],
+        "clangd.checkUpdates": false,
+        "rewrap.wrappingColumn": 100,
+        "rewrap.autoWrap.enabled": true
+      }
+    }
+  },
+  "remoteUser": "lion"
+}
