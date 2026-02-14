@@ -19,7 +19,7 @@
       model SDFs you only set <dimensions>, so the plugin uses its defaults. By default,
       robot_base_frame is {model_name}/base_footprint, which is why the bridged ROS message shows
       drone_1/base_footprint. We override it to base_link so that the bridged ROS message shows
-      drone_1/base_link. --> 
+      base_link. But it's problematic because the child_frame_id is not auto-namespaced by Gazebo.--> 
       <robot_base_frame>base_link</robot_base_frame>
       <xyz_offset>0 0 0</xyz_offset>
     </plugin>
