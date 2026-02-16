@@ -32,7 +32,6 @@ DRONE_LAUNCH_CURSOR = DRONE_LAUNCH_START_TIME
 SPAWN_LAUNCH_DURATION = 5.0
 VIO_ESTIMATOR_LAUNCH_DURATION = 5.0
 PERCEPTION_LAUNCH_DURATION = 3.0
-NAV2_LAUNCH_DURATION = 3.0
 NAVIGATOR_LAUNCH_DURATION = 3.0
 GEOMETRIC_CONTROLLER_LAUNCH_DURATION = 2.0
 RVIZ_LAUNCH_DURATION = 2.0
@@ -109,13 +108,6 @@ def create_drone_launch(
         }.items(),
     )
 
-    nav2_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(str(Path(pkg_red_navigator) / "launch" / "nav2.launch.py")),
-        launch_arguments={
-            "drone_id": drone_id,
-        }.items(),
-    )
-
     navigator_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             str(Path(pkg_red_navigator) / "launch" / "navigator.launch.py")
@@ -167,9 +159,6 @@ def create_drone_launch(
 
     launch_actions.append(TimerAction(period=current_time, actions=[perception_launch]))
     current_time += PERCEPTION_LAUNCH_DURATION
-
-    launch_actions.append(TimerAction(period=current_time, actions=[nav2_launch]))
-    current_time += NAV2_LAUNCH_DURATION
 
     launch_actions.append(TimerAction(period=current_time, actions=[navigator_launch]))
     current_time += NAVIGATOR_LAUNCH_DURATION
