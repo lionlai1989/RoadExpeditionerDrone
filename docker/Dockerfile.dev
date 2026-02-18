@@ -91,24 +91,24 @@ RUN pip3 install --no-cache-dir "protobuf==3.20.3"
 # Initialize rosdep
 RUN rosdep init || true && rosdep update
 
-# Install Micro-XRCE-DDS-Agent (required for PX4-ROS 2 communication)
-RUN git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git -b v2.4.3 /tmp/Micro-XRCE-DDS-Agent \
-    && cd /tmp/Micro-XRCE-DDS-Agent \
-    && mkdir build \
-    && cd build \
-    && cmake .. \
-    && make -j$(nproc) \
-    && make install \
-    && ldconfig /usr/local/lib/ \
-    && rm -rf /tmp/Micro-XRCE-DDS-Agent
-
-# Install PX4 required python dependencies
-RUN pip3 install --no-cache-dir kconfiglib jinja2
-
-# Install PX4 Autopilot dependencies and source code
-# We use v1.16.1 which supports Gazebo Harmonic
+# # Install Micro-XRCE-DDS-Agent (required for PX4-ROS 2 communication)
+# RUN git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git -b v2.4.3 /tmp/Micro-XRCE-DDS-Agent \
+#     && cd /tmp/Micro-XRCE-DDS-Agent \
+#     && mkdir build \
+#     && cd build \
+#     && cmake .. \
+#     && make -j$(nproc) \
+#     && make install \
+#     && ldconfig /usr/local/lib/ \
+#     && rm -rf /tmp/Micro-XRCE-DDS-Agent
+#
+# # Install PX4 required python dependencies
+# RUN pip3 install --no-cache-dir kconfiglib jinja2
+#
+# # Install PX4 Autopilot dependencies and source code
+# # We use v1.16.1 which supports Gazebo Harmonic
 WORKDIR /home/${USER_NAME}
-RUN git clone https://github.com/PX4/PX4-Autopilot.git --recursive -b v1.16.1
+# RUN git clone https://github.com/PX4/PX4-Autopilot.git --recursive -b v1.16.1
 # && cd PX4-Autopilot \
 # && bash ./Tools/setup/ubuntu.sh \
 # && make px4_sitl -j$(nproc) \

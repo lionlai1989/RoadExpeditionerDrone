@@ -1,3 +1,9 @@
+/**
+ * A geometric controller node that computes and publishes motor speeds at 100 Hz.
+ * subscribe: odometry and desired_odometry
+ * publish: command/motor_speed
+ */
+
 #include "red_geometric_controller/geometric_controller.hpp"
 
 #include <algorithm>
@@ -69,7 +75,8 @@ GeometricController::compute_wrench(const geometry_msgs::msg::Pose &curr_pose,
         -kp_position_ * e_pos - kv_linvel_ * e_linvel + kGravity * Eigen::Vector3d(0.0, 0.0, 1.0);
     const auto [desired_rot, acc_cmd_limited] = compute_desired_orientation(acc_cmd, des_yaw);
     double force = drone_params_.mass * acc_cmd_limited.dot(curr_rot.col(2));
-    force = std::clamp(force, drone_params_.force_z_limit.first, drone_params_.force_z_limit.second);
+    force =
+        std::clamp(force, drone_params_.force_z_limit.first, drone_params_.force_z_limit.second);
     const Eigen::Vector3d e_rot = rotation_error(curr_rot, desired_rot);
     const Eigen::Vector3d e_angvel =
         curr_angvel - curr_rot.transpose() * (desired_rot * des_angvel);
@@ -137,7 +144,7 @@ GeometricController::GeometricController() : rclcpp::Node("geometric_controller_
         "desired_odometry", odom_qos,
         std::bind(&GeometricController::desired_odom_callback, this, std::placeholders::_1));
 
-    control_timer_ = rclcpp::create_timer(this, this->get_clock(), std::chrono::milliseconds(5),
+    control_timer_ = rclcpp::create_timer(this, this->get_clock(), std::chrono::milliseconds(10),
                                           std::bind(&GeometricController::control_step, this));
 }
 

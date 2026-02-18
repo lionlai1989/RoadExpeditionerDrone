@@ -32,6 +32,7 @@ def generate_launch_description():
         namespace=drone_id,
         output="screen",
         parameters=[configured_params],
+        arguments=["--ros-args", "--log-level", "warn"],
     )
 
     lifecycle_manager = Node(
@@ -41,6 +42,7 @@ def generate_launch_description():
         namespace=drone_id,
         output="screen",
         parameters=[configured_params],
+        arguments=["--ros-args", "--log-level", "info"],
     )
 
     return LaunchDescription(

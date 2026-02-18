@@ -127,6 +127,7 @@ def create_drone_launch(
         }.items(),
     )
 
+    # In "default.rviz", I hardcode `Fixed Frame: drone_1/map`. Ignore it for now.
     rviz2_node = Node(
         package="rviz2",
         executable="rviz2",
