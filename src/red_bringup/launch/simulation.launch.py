@@ -18,8 +18,9 @@ from launch_ros.actions import Node
 DRONES_CONFIG = {
     "drone_1": {  # namespace for the drone
         "model_name": "x500_depth",
-        "initial_pose": "0.0,0.0,0.0",  # spawn position in meters in world frame (x, y, z)
+        "initial_pose": "1.0,3.0,0.0",  # spawn position in meters in world frame (x, y, z)
         "hover_height": "1.0",  # meters
+        "vio_source": "groundtruth",  # groundtruth or openvins
     },
 }
 
@@ -95,6 +96,7 @@ def create_drone_launch(
         ),
         launch_arguments={
             "drone_id": drone_id,
+            "vio_source": drone_config["vio_source"],
         }.items(),
     )
 

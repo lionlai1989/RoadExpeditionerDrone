@@ -14,10 +14,11 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     drone_id_arg = DeclareLaunchArgument("drone_id", description="Drone namespace")
+    vio_source_arg = DeclareLaunchArgument("vio_source", description="groundtruth or openvins")
 
     drone_id = LaunchConfiguration("drone_id")
 
-    bridge_odometry = PythonExpression(
+    bridge_groundtruth_odometry = PythonExpression(
         [
             "'/model/' + '",
             drone_id,
@@ -25,11 +26,11 @@ def generate_launch_description():
         ]
     )
 
-    remap_odometry = PythonExpression(
+    remap_groundtruth_odometry = PythonExpression(
         [
             "'/model/' + '",
             drone_id,
-            "' + '/odometry:=odometry'",
+            "' + '/odometry:=groundtruth_odometry'",
         ]
     )
 
@@ -37,14 +38,14 @@ def generate_launch_description():
     ros_gz_bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
-        name="odometry_ground_truth_bridge",
+        name="odometry_groundtruth_bridge",
         namespace=drone_id,
         parameters=[{"use_sim_time": True}],
         arguments=[
-            bridge_odometry,
+            bridge_groundtruth_odometry,
             "--ros-args",
             "-r",
-            remap_odometry,
+            remap_groundtruth_odometry,
         ],
         output="screen",
     )
@@ -53,11 +54,10 @@ def generate_launch_description():
     odom_frame_id = PythonExpression(["'", drone_id, "' + '/odom'"])
     base_frame_id = PythonExpression(["'", drone_id, "' + '/base_link'"])
 
-    # Broadcast the odom -> base_link transform from the bridged Odometry topic.
-    odom_tf_broadcaster = Node(
+    odom_adapter = Node(
         package="red_vio_estimator",
-        executable="odom_tf_broadcaster",
-        name="odom_tf_broadcaster",
+        executable="odom_adapter",
+        name="odom_adapter",
         namespace=drone_id,
         parameters=[
             {
@@ -72,7 +72,8 @@ def generate_launch_description():
     return LaunchDescription(
         [
             drone_id_arg,
+            vio_source_arg,
             ros_gz_bridge,
-            odom_tf_broadcaster,
+            odom_adapter,
         ]
     )
