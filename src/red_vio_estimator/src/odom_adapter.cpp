@@ -126,6 +126,11 @@ class OdomAdapter : public rclcpp::Node {
         publish_odom_and_tf(*msg, odom_to_base);
     }
 
+    void handle_openvins_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
+        ;
+        ;
+    }
+
     std::string odom_frame_id_;
     std::string base_frame_id_;
 
