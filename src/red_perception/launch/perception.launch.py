@@ -34,25 +34,6 @@ def generate_launch_description():
             "@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'",
         ]
     )
-    bridge_rgb_image = PythonExpression(
-        [
-            "'/world/' + '",
-            world_name,
-            "' + '/model/' + '",
-            drone_id,
-            "' + '/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image[gz.msgs.Image'",
-        ]
-    )
-    bridge_rgb_camera_info = PythonExpression(
-        [
-            "'/world/' + '",
-            world_name,
-            "' + '/model/' + '",
-            drone_id,
-            "' + '/link/camera_link/sensor/IMX214/camera_info"
-            "@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'",
-        ]
-    )
 
     remap_depth_image = PythonExpression(
         [
@@ -72,24 +53,6 @@ def generate_launch_description():
             "' + '/link/camera_link/sensor/StereoOV7251/camera_info:=depth/camera_info'",
         ]
     )
-    remap_rgb_image = PythonExpression(
-        [
-            "'/world/' + '",
-            world_name,
-            "' + '/model/' + '",
-            drone_id,
-            "' + '/link/camera_link/sensor/IMX214/image:=rgb/image'",
-        ]
-    )
-    remap_rgb_camera_info = PythonExpression(
-        [
-            "'/world/' + '",
-            world_name,
-            "' + '/model/' + '",
-            drone_id,
-            "' + '/link/camera_link/sensor/IMX214/camera_info:=rgb/camera_info'",
-        ]
-    )
     ros_gz_bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
@@ -99,19 +62,44 @@ def generate_launch_description():
         arguments=[
             bridge_depth_image,
             bridge_depth_camera_info,
-            bridge_rgb_image,
-            bridge_rgb_camera_info,
             "--ros-args",
             "-r",
             remap_depth_image,
             "-r",
             remap_depth_camera_info,
-            "-r",
-            remap_rgb_image,
-            "-r",
-            remap_rgb_camera_info,
         ],
         output="screen",
+    )
+
+    # Gazebo publishes IMU data with frame_id "<drone_id>/base_link/imu_sensor".
+    # RTAB-Map's body frame is "<drone_id>/base_link", so it needs TF between
+    # these two frames to transform accel/gyro into the base frame.
+    # In this model, IMU is colocated with base_link, so the transform is identity.
+    static_tf_base_link_to_imu_sensor = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="static_tf_base_link_to_imu_sensor",
+        namespace=drone_id,
+        output="screen",
+        arguments=[
+            "--x",
+            "0",
+            "--y",
+            "0",
+            "--z",
+            "0",
+            "--yaw",
+            "0",
+            "--pitch",
+            "0",
+            "--roll",
+            "0",
+            "--frame-id",
+            PythonExpression(["'", drone_id, "' + '/base_link'"]),
+            "--child-frame-id",
+            PythonExpression(["'", drone_id, "' + '/base_link/imu_sensor'"]),
+        ],
+        parameters=[{"use_sim_time": True}],
     )
 
     # RTAB-Map SLAM
@@ -134,6 +122,8 @@ def generate_launch_description():
                 "map_frame_id": PythonExpression(["'", drone_id, "' + '/map'"]),
                 "publish_tf": True,
                 "subscribe_depth": True,
+                "subscribe_imu": True,
+                "wait_imu_to_init": True,
                 "subscribe_scan": False,
                 "approx_sync": True,
                 "use_sim_time": True,
@@ -164,6 +154,7 @@ def generate_launch_description():
                 "Mem/DepthCompressionFormat": ".png",
                 "Mem/SaveDepth16Format": "false",  # float32 depth
                 "Mem/BadSignaturesIgnored": "false",
+                "Optimizer/GravityConstraints": "true",
             }
         ],
         remappings=[
@@ -180,6 +171,7 @@ def generate_launch_description():
             drone_id_arg,
             world_name_arg,
             ros_gz_bridge,
+            static_tf_base_link_to_imu_sensor,
             rtabmap_launch,
         ]
     )

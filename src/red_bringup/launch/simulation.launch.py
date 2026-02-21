@@ -97,6 +97,7 @@ def create_drone_launch(
         launch_arguments={
             "drone_id": drone_id,
             "vio_source": drone_config["vio_source"],
+            "world_name": LaunchConfiguration("world_name"),
         }.items(),
     )
 

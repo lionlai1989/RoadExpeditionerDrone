@@ -1,5 +1,17 @@
 /**
-Convert Gazebo groundtruth odometry (world -> base_link) to ROS odom convention.
+Adapt either groundtruth odometry or OpenVINS odometry into a stable `odometry` + `odom->base_link`
+interface for the rest of the system.
+
+Startup behavior: TODO: verify if this is correct?
+1) Bootstrap from Gazebo groundtruth:
+   T_odom_base = inverse(T_world_base0) * T_world_base
+2) Once OpenVINS starts publishing valid odometry, switch permanently to OpenVINS.
+3) Freeze one alignment transform at switch time to keep outputs continuous:
+   T_odom_ovGlobal = T_odom_base_atSwitch * inverse(T_ovGlobal_imu_atSwitch)
+4) After switch:
+   T_odom_base = T_odom_ovGlobal * T_ovGlobal_imu
+
+We assume IMU and base_link are colocated in this simulation model.
 
 The first received groundtruth pose is used as the odom-frame origin:
   T_odom_base = inverse(T_world_base0) * T_world_base
@@ -32,6 +44,10 @@ This forces all downstream modules to use proper `tf2` lookups against the `map`
 navigation goals, rather than cheating by reading the absolute `/odometry` topic.
  */
 
+#include <cassert>
+#include <cmath>
+#include <deque>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -52,28 +68,27 @@ class OdomAdapter : public rclcpp::Node {
         groundtruth_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
             "groundtruth_odometry", rclcpp::QoS(50),
             std::bind(&OdomAdapter::handle_groundtruth_odom, this, std::placeholders::_1));
+        openvins_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
+            "odomimu", rclcpp::QoS(50),
+            std::bind(&OdomAdapter::handle_openvins_odom, this, std::placeholders::_1));
         odom_publisher_ = create_publisher<nav_msgs::msg::Odometry>("odometry", rclcpp::QoS(50));
     }
 
   private:
     static tf2::Transform pose_to_transform(const geometry_msgs::msg::Pose &pose) {
-        const tf2::Quaternion q(pose.orientation.x, pose.orientation.y, pose.orientation.z,
-                                pose.orientation.w);
+        tf2::Quaternion q(pose.orientation.x, pose.orientation.y, pose.orientation.z,
+                          pose.orientation.w);
+        q.normalize();
         const tf2::Vector3 t(pose.position.x, pose.position.y, pose.position.z);
         return tf2::Transform(q, t);
     }
 
-    void handle_groundtruth_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
-        const tf2::Transform world_to_base = pose_to_transform(msg->pose.pose);
-        if (!origin_initialized_) {
-            world_to_base0_inverse_ = world_to_base.inverse();
-            origin_initialized_ = true;
-        }
-        const tf2::Transform odom_to_base = world_to_base0_inverse_ * world_to_base;
+    void publish_odom_and_tf(const nav_msgs::msg::Odometry &source_msg,
+                             const tf2::Transform &odom_to_base) {
         const tf2::Vector3 p = odom_to_base.getOrigin();
         const tf2::Quaternion q = odom_to_base.getRotation();
 
-        nav_msgs::msg::Odometry odom_msg = *msg;
+        nav_msgs::msg::Odometry odom_msg = source_msg;
         odom_msg.header.frame_id = odom_frame_id_;
         odom_msg.child_frame_id = base_frame_id_;
         odom_msg.pose.pose.position.x = p.x();
@@ -96,11 +111,31 @@ class OdomAdapter : public rclcpp::Node {
         tf_broadcaster_->sendTransform(transform);
     }
 
+    void handle_groundtruth_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
+        if (switched_to_openvins_) {
+            return;
+        }
+
+        const tf2::Transform world_to_base = pose_to_transform(msg->pose.pose);
+        if (!origin_initialized_) {
+            world_to_base0_inverse_ = world_to_base.inverse();
+            origin_initialized_ = true;
+        }
+
+        const tf2::Transform odom_to_base = world_to_base0_inverse_ * world_to_base;
+        publish_odom_and_tf(*msg, odom_to_base);
+    }
+
     std::string odom_frame_id_;
     std::string base_frame_id_;
+
     bool origin_initialized_ = false;
     tf2::Transform world_to_base0_inverse_;
+
+    bool switched_to_openvins_ = false;
+
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr groundtruth_subscription_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr openvins_subscription_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher_;
     std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 };
