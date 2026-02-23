@@ -3,9 +3,9 @@
 <package format="3">
   <name>red_navigator</name>
   <version>1.0.0</version>
-  <description>Navigation package for RoadExpeditionerDrone</description>
+  <description>High-level navigation state machine</description>
   <maintainer email="lionlai1989@gmail.com">Chih-An Lion Lai</maintainer>
-  <license>TODO</license>
+  <license>GPL-3.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

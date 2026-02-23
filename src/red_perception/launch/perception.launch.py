@@ -145,8 +145,8 @@ def generate_launch_description():
                 "Kp/NndrRatio": "0.7",
                 "Kp/BadSignRatio": "0.5",
                 "Kp/MaxFeatures": "600",
-                "Grid/MaxGroundHeight": "0.2",  # Points < 0.2m are Ground (Free)
-                "Grid/MaxObstacleHeight": "2.0",  # Points > 2.0m (and < 3m walls) are Obstacles
+                "Grid/MaxGroundHeight": "0.0",  # disable
+                "Grid/MaxObstacleHeight": "0.0",  # disable
                 "Grid/RangeMax": "5.0",  # Limit grid map range
                 "Grid/NoiseFilteringMinNeighbors": "5",  # Reduce noise
                 "Grid/RayTracing": "true",  # Ray tracing to clear free space

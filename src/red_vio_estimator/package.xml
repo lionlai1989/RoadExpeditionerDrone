@@ -2,10 +2,10 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>red_vio_estimator</name>
-  <version>0.0.0</version>
-  <description>VIO estimator package for RoadExpeditionerDrone</description>
+  <version>1.0.0</version>
+  <description>Wraps OpenVINS to compute high-frequency visual-inertial odometry</description>
   <maintainer email="lionlai1989@gmail.com">Chih-An Lion Lai</maintainer>
-  <license>TODO</license>
+  <license>GPL-3.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

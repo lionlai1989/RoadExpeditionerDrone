@@ -258,6 +258,8 @@ class Navigator : public rclcpp::Node {
 
         this->desired_odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>(
             "desired_odometry", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
+        this->visual_path_pub_ = this->create_publisher<nav_msgs::msg::Path>(
+            "visual_path", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
 
         this->navi_state_timer_ = rclcpp::create_timer(
             this, this->get_clock(), 200ms, std::bind(&Navigator::state_machine_step, this));
@@ -293,8 +295,6 @@ class Navigator : public rclcpp::Node {
                 this->map_frame_id_ = msg->header.frame_id; // drone_1/map
             }
         }
-        // red::navigator::save_map_image(*msg, this->explorer_.get_free_threshold());
-        // red::navigator::save_map_text(*msg);
     }
 
     void pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
@@ -332,21 +332,8 @@ class Navigator : public rclcpp::Node {
         assert(map.info.width > 0);
         assert(map.info.height > 0);
 
-        // only continue finding goal, path and trajectory in LOITER state.
+        // Only continue finding goal, path and trajectory when in LOITER state.
         if (this->state_ != NavState::LOITER) {
-            // RCLCPP_INFO(this->get_logger(), "Not in LOITER state. Skipping explorer step.");
-
-            if (this->path_ready_) {
-                // RCLCPP_INFO(this->get_logger(), "Saving map and path image...");
-                nav_msgs::msg::Path path_snapshot;
-                {
-                    std::lock_guard<std::mutex> lock(this->path_mutex_);
-                    path_snapshot = this->current_path_;
-                }
-                red::navigator::save_map_path_image(map, this->explorer_.get_free_threshold(),
-                                                    path_snapshot);
-                return;
-            }
             return;
         }
 
@@ -403,6 +390,7 @@ class Navigator : public rclcpp::Node {
         this->path_ready_ = false;
         this->trajectory_ready_ = false;
         this->trajectory_planner_.clear();
+        this->visual_path_pub_->publish(this->current_path_);
     }
 
     void compute_new_path() {
@@ -481,6 +469,11 @@ class Navigator : public rclcpp::Node {
                     this->path_ready_ = true;
                     this->trajectory_ready_ = this->trajectory_planner_.plan(path);
                 }
+                nav_msgs::msg::Path visual_path = path;
+                for (auto &pose : visual_path.poses) {
+                    pose.pose.position.z += this->hover_height_;
+                }
+                this->visual_path_pub_->publish(visual_path);
                 if (this->path_ready_ && !this->trajectory_ready_) {
                     const std::string err_msg =
                         "Path is ready but trajectory planner failed to build a trajectory.";
@@ -827,6 +820,7 @@ class Navigator : public rclcpp::Node {
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr desired_odom_pub_;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr visual_path_pub_;
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pose_sub_;
 

@@ -1,17 +1,3 @@
-/**
- * A drone with RGB-D camera can send RGB images, depth images and odometry data to RTAB-Map.
- * RTAB-Map build a map with respect to the odometry data. The Explorer will use the generated map
- * to explore unexplored areas (frontiers).
- *
- * In an occupancy grid:
- * - Free cell: observed (0-10), no obstacle
- * - Occupied cell (100): obstacle
- * - Unknown cell (-1): never observed
- *
- * A frontier cell is:
- * - A free cell that has at least one neighboring unknown cell
- */
-
 #include "red_navigator/frontier_explorer.hpp"
 
 #include <cmath>

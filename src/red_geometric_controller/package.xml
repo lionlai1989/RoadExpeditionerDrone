@@ -3,9 +3,9 @@
 <package format="3">
   <name>red_geometric_controller</name>
   <version>1.0.0</version>
-  <description>Geometric Controller Package</description>
+  <description>Runs the low-level SE(3) geometric controller</description>
   <maintainer email="lionlai1989@gmail.com">Chih-An Lion Lai</maintainer>
-  <license>Apache-2.0</license>
+  <license>GPL-3.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

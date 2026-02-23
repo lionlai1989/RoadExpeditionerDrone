@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this project, please cite it as below."
+title: "The RoadExpeditionerDrone Project"
+type: software
+authors:
+  - family-names: "Lai"
+    given-names: "Chih-An Lion"
+date-released: 2026-02-28
+version: 1.0.0
+license: GPL-3.0-only
+repository-code: "https://github.com/lionlai1989/RoadExpeditionerDrone"
+url: "https://github.com/lionlai1989/RoadExpeditionerDrone"

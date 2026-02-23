@@ -2,9 +2,9 @@
 <package format="3">
   <name>red_gz_plugin</name>
   <version>1.0.0</version>
-  <description>RoadExpeditionerDrone Gazebo Plugin</description>
+  <description>Custom Gazebo plugins bridging simulated quadrotors with ROS 2</description>
   <maintainer email="lionlai1989@gmail.com">Chih-An Lion Lai</maintainer>
-  <license>TODO</license>
+  <license>GPL-3.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

@@ -1,3 +1,19 @@
+/**
+ * B. Yamauchi, "A frontier-based approach for autonomous exploration," Proceedings 1997 IEEE
+ * International Symposium on Computational Intelligence in Robotics and Automation CIRA'97.
+ * 'Towards New Computational Principles for Robotics and Automation', Monterey, CA, USA, 1997, pp.
+ * 146-151, doi: 10.1109/CIRA.1997.613851. keywords: {Mobile robots;Orbital robotics;Sonar
+ * navigation;Artificial intelligence;Laboratories;Testing;Humans;Indoor environments;Space
+ * exploration},
+ *
+ * In an occupancy grid:
+ * - Free cell: observed (0-10), no obstacle
+ * - Occupied cell (100): obstacle
+ * - Unknown cell (-1): never observed
+ *
+ * A frontier cell is a free cell that has at least one neighboring unknown cell
+ */
+
 #pragma once
 
 #include <cstdint>
