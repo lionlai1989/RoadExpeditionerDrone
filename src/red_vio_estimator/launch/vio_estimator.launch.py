@@ -1,8 +1,5 @@
 """
-Launch VIO sources for one drone namespace.
-
-`odom_adapter` always provides the system-facing interface (`odometry` + `odom -> base_link`).
-In `openvins` mode, it bootstraps from groundtruth first, then switches to OpenVINS internally.
+Launch VIO for a namespaced drone.
 """
 
 from launch import LaunchDescription
@@ -15,7 +12,9 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     drone_id_arg = DeclareLaunchArgument("drone_id", description="Drone namespace")
-    vio_source_arg = DeclareLaunchArgument("vio_source", description="groundtruth or openvins")
+    vio_source_arg = DeclareLaunchArgument(
+        "vio_source", default_value="groundtruth", description="groundtruth or openvins"
+    )
     world_name_arg = DeclareLaunchArgument(
         "world_name", description="Gazebo world name `<world name='...'>` defined in the world SDF."
     )
