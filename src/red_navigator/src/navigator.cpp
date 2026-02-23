@@ -589,6 +589,87 @@ class Navigator : public rclcpp::Node {
         return std::abs(this->spin_accumulated_) >= kTwoPi;
     }
 
+    // Capture the current hold point in the map frame.
+    //
+    // Why this exists:
+    // - SPINONCE and LOITER are conceptually "stay at one global location".
+    // - OpenVINS odom can drift over time, especially during pure rotation.
+    // - If we store hold position in odom, the hold point drifts with odom and the drone follows
+    // it.
+    //
+    // Strategy:
+    // - Take the current position from odom.
+    // - Transform that position into map at the same timestamp.
+    // - Store map XY as the authoritative hold anchor.
+    //
+    // Result:
+    // - The hold anchor remains globally stable (map frame) while odom drifts.
+    // - Later, each control cycle converts this map anchor back into odom for the controller.
+    void lock_hold_position_in_map(const nav_msgs::msg::Odometry &current_odom) {
+        assert(!this->odom_frame_id_.empty());
+        assert(!this->map_frame_id_.empty());
+
+        // Build a point in odom from the latest state estimate.
+        geometry_msgs::msg::PointStamped hold_odom;
+        hold_odom.header = current_odom.header;
+        hold_odom.point.x = current_odom.pose.pose.position.x;
+        hold_odom.point.y = current_odom.pose.pose.position.y;
+        hold_odom.point.z = current_odom.pose.pose.position.z;
+
+        // Resolve odom -> map at the same sample time so we do not mix time slices.
+        // This keeps the anchor consistent with the odometry sample that triggered SPINONCE/LOITER.
+        const auto odom_to_map =
+            this->tf_buffer_->lookupTransform(this->map_frame_id_, this->odom_frame_id_,
+                                              current_odom.header.stamp, tf2::durationFromSec(0.2));
+        geometry_msgs::msg::PointStamped hold_map;
+        tf2::doTransform(hold_odom, hold_map, odom_to_map);
+
+        // Persist only map XY as the global hold anchor.
+        // Z hold is intentionally commanded from takeoff height to keep altitude behavior
+        // unchanged.
+        this->hold_x_map_ = hold_map.point.x;
+        this->hold_y_map_ = hold_map.point.y;
+    }
+
+    // Convert the stored map-frame hold anchor into an odom-frame position command.
+    //
+    // Why this exists:
+    // - The geometric controller consumes desired pose in odom coordinates.
+    // - Our authoritative hold anchor is stored in map to reject odom drift.
+    //
+    // Strategy:
+    // - Rebuild the hold point in map using the stored hold_x_map_/hold_y_map_.
+    // - Transform map -> odom at the current odometry timestamp.
+    // - Fill desired_pose position with the transformed point.
+    //
+    // Result:
+    // - Commands remain in odom (controller-compatible), but represent a map-stationary target.
+    // - During drift, the commanded odom coordinates update automatically to counteract drift.
+    void fill_desired_hold_pose_from_map(const nav_msgs::msg::Odometry &current_odom,
+                                         geometry_msgs::msg::Pose &desired_pose) {
+
+        // Reconstruct hold anchor in map frame.
+        geometry_msgs::msg::PointStamped hold_map;
+        hold_map.header.frame_id = this->map_frame_id_;
+        hold_map.header.stamp = current_odom.header.stamp;
+        hold_map.point.x = this->hold_x_map_;
+        hold_map.point.y = this->hold_y_map_;
+        hold_map.point.z = this->takeoff_pose_.position.z;
+
+        // Resolve map -> odom at the same control timestamp to avoid stale/extrapolated transforms.
+        const auto map_to_odom =
+            this->tf_buffer_->lookupTransform(this->odom_frame_id_, this->map_frame_id_,
+                                              current_odom.header.stamp, tf2::durationFromSec(0.2));
+        geometry_msgs::msg::PointStamped hold_odom;
+        tf2::doTransform(hold_map, hold_odom, map_to_odom);
+
+        // Output odom-frame position command.
+        // Orientation is owned by the caller (spin yaw in SPINONCE, hold yaw in LOITER).
+        desired_pose.position.x = hold_odom.point.x;
+        desired_pose.position.y = hold_odom.point.y;
+        desired_pose.position.z = this->takeoff_pose_.position.z;
+    }
+
     void state_machine_step() {
         /**
          * There are 5 states:
@@ -662,8 +743,7 @@ class Navigator : public rclcpp::Node {
             const float dy = current_odom->pose.pose.position.y - this->takeoff_pose_.position.y;
             const float dz = current_odom->pose.pose.position.z - this->takeoff_pose_.position.z;
             if (std::sqrt(dx * dx + dy * dy + dz * dz) < this->takeoff_tolerance_) {
-                this->hold_x_ = current_odom->pose.pose.position.x;
-                this->hold_y_ = current_odom->pose.pose.position.y;
+                this->lock_hold_position_in_map(*current_odom);
                 this->hold_yaw_ = quat_to_yaw(current_odom->pose.pose.orientation);
                 this->start_spin(this->hold_yaw_);
 
@@ -677,16 +757,14 @@ class Navigator : public rclcpp::Node {
         }
         case NavState::SPINONCE: {
             if (this->update_spin_progress(quat_to_yaw(current_odom->pose.pose.orientation))) {
-                this->hold_x_ = current_odom->pose.pose.position.x;
-                this->hold_y_ = current_odom->pose.pose.position.y;
+                // Do not update hold position in map here because the odom may drift during spin.
+
                 this->hold_yaw_ = quat_to_yaw(current_odom->pose.pose.orientation);
 
                 // Transit to LOITER
                 this->state_ = NavState::LOITER;
             } else {
-                desired_pose.position.x = this->hold_x_;
-                desired_pose.position.y = this->hold_y_;
-                desired_pose.position.z = this->takeoff_pose_.position.z;
+                this->fill_desired_hold_pose_from_map(*current_odom, desired_pose);
                 const rclcpp::Time now = this->get_clock()->now();
                 const double elapsed = (now - this->spin_start_time_).seconds();
                 this->spin_command_yaw_ = this->spin_start_yaw_ +
@@ -700,8 +778,7 @@ class Navigator : public rclcpp::Node {
             if (this->path_ready_ && this->trajectory_ready_) {
                 std::tie(desired_pose, desired_twist) = this->calculate_waypoint(*current_odom);
             } else {
-                this->hold_x_ = current_odom->pose.pose.position.x;
-                this->hold_y_ = current_odom->pose.pose.position.y;
+                this->lock_hold_position_in_map(*current_odom);
                 this->hold_yaw_ = quat_to_yaw(current_odom->pose.pose.orientation);
                 this->start_spin(this->hold_yaw_);
 
@@ -714,9 +791,7 @@ class Navigator : public rclcpp::Node {
             if (this->path_ready_ && this->trajectory_ready_) {
                 this->state_ = NavState::NAVIGATING;
             } else {
-                desired_pose.position.x = this->hold_x_;
-                desired_pose.position.y = this->hold_y_;
-                desired_pose.position.z = this->takeoff_pose_.position.z;
+                this->fill_desired_hold_pose_from_map(*current_odom, desired_pose);
                 desired_pose.orientation = yaw_to_quat(this->hold_yaw_);
             }
             break;
@@ -796,8 +871,8 @@ class Navigator : public rclcpp::Node {
     double goal_y_map_{0.0};
     double goal_reached_radius_{0.1};
 
-    double hold_x_{0.0};
-    double hold_y_{0.0};
+    double hold_x_map_{0.0};
+    double hold_y_map_{0.0};
     double hold_yaw_{0.0};
     double spin_start_yaw_{0.0};
     double spin_last_yaw_{0.0};
