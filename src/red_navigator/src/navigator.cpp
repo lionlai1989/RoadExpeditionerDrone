@@ -557,15 +557,17 @@ class Navigator : public rclcpp::Node {
         desired_pose.orientation = yaw_to_quat(target_yaw);
 
         geometry_msgs::msg::Twist desired_twist{};
-        // TODO: review this and GeometricController::compute_wrench()
-        const tf2::Quaternion q_body_in_odom =
-            tf2::Quaternion(current_odom.pose.orientation.x, current_odom.pose.orientation.y,
-                            current_odom.pose.orientation.z, current_odom.pose.orientation.w);
-        const tf2::Matrix3x3 rot_body_to_odom(q_body_in_odom);
-        const tf2::Vector3 velocity_body = rot_body_to_odom.transpose() * velocity_odom;
-        desired_twist.linear.x = velocity_body.x();
-        desired_twist.linear.y = velocity_body.y();
-        desired_twist.linear.z = velocity_body.z();
+        // Express desired linear velocity in the desired body frame so the controller can
+        // consistently rotate it back with desired pose orientation.
+        const tf2::Quaternion q_desired_body_in_odom(
+            desired_pose.orientation.x, desired_pose.orientation.y, desired_pose.orientation.z,
+            desired_pose.orientation.w);
+        const tf2::Matrix3x3 rot_desired_body_to_odom(q_desired_body_in_odom);
+        const tf2::Vector3 desired_velocity_body =
+            rot_desired_body_to_odom.transpose() * velocity_odom;
+        desired_twist.linear.x = desired_velocity_body.x();
+        desired_twist.linear.y = desired_velocity_body.y();
+        desired_twist.linear.z = desired_velocity_body.z();
         return {desired_pose, desired_twist};
     }
 

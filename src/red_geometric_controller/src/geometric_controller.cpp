@@ -58,13 +58,16 @@ GeometricController::compute_wrench(const geometry_msgs::msg::Pose &curr_pose,
 
     const Eigen::Vector3d des_pos(desired_pose.position.x, desired_pose.position.y,
                                   desired_pose.position.z);
+    const Eigen::Matrix3d des_rot =
+        quat_to_rotmat(desired_pose.orientation.w, desired_pose.orientation.x,
+                       desired_pose.orientation.y, desired_pose.orientation.z);
     const auto des_euler = quat_to_euler(desired_pose.orientation.w, desired_pose.orientation.x,
                                          desired_pose.orientation.y, desired_pose.orientation.z);
     const double des_yaw = std::get<2>(des_euler);
 
     const Eigen::Vector3d des_linvel_body(desired_twist.linear.x, desired_twist.linear.y,
                                           desired_twist.linear.z);
-    const Eigen::Vector3d des_lin_vel = curr_rot * des_linvel_body;
+    const Eigen::Vector3d des_lin_vel = des_rot * des_linvel_body;
     const Eigen::Vector3d des_angvel(desired_twist.angular.x, desired_twist.angular.y,
                                      desired_twist.angular.z);
 
@@ -73,13 +76,13 @@ GeometricController::compute_wrench(const geometry_msgs::msg::Pose &curr_pose,
 
     const Eigen::Vector3d acc_cmd =
         -kp_position_ * e_pos - kv_linvel_ * e_linvel + kGravity * Eigen::Vector3d(0.0, 0.0, 1.0);
-    const auto [desired_rot, acc_cmd_limited] = compute_desired_orientation(acc_cmd, des_yaw);
+    const auto [commanded_rot, acc_cmd_limited] = compute_desired_orientation(acc_cmd, des_yaw);
     double force = drone_params_.mass * acc_cmd_limited.dot(curr_rot.col(2));
     force =
         std::clamp(force, drone_params_.force_z_limit.first, drone_params_.force_z_limit.second);
-    const Eigen::Vector3d e_rot = rotation_error(curr_rot, desired_rot);
+    const Eigen::Vector3d e_rot = rotation_error(curr_rot, commanded_rot);
     const Eigen::Vector3d e_angvel =
-        curr_angvel - curr_rot.transpose() * (desired_rot * des_angvel);
+        curr_angvel - curr_rot.transpose() * (commanded_rot * des_angvel);
     const Eigen::Vector3d torque =
         -(kr_rotmat_.asDiagonal() * e_rot) - (kw_angvel_.asDiagonal() * e_angvel) +
         curr_angvel.cross(drone_params_.inertia.cwiseProduct(curr_angvel));
