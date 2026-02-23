@@ -77,24 +77,22 @@ transformations.
 
 ## How to run
 
-1. Initialize git submodule
-This project has a git submodule OpenVINS at `src/open_vins`. After cloning this repository,
-initialize submodules before building:
-```bash
-git submodule update --init --recursive
-```
+1. Initialize git submodule OpenVINS at `src/open_vins`: After cloning this repository, initialize
+   submodules before building:
+    ```bash
+    git submodule update --init --recursive
+    ```
 
-2. Activate Environment
-Open IDE and run "Dev Containers: Rebuild and Reopen in Container".
+2. Activate Environment: Open IDE and run "Dev Containers: Rebuild and Reopen in Container".
 
 3. Build the workspace and launch
-```bash
-rm -rf build install log ~/.ros/rtabmap.db \
-&& source /opt/ros/humble/setup.bash \
-&& colcon build --base-paths src --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-&& source install/setup.bash \
-&& ros2 launch red_bringup simulation.launch.py world_path:=src/red_bringup/worlds/single_layer_maze.world world_name:=single_layer_maze_world
-```
+    ```bash
+    rm -rf build install log ~/.ros/rtabmap.db \
+    && source /opt/ros/humble/setup.bash \
+    && colcon build --base-paths src --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+    && source install/setup.bash \
+    && ros2 launch red_bringup simulation.launch.py world_path:=src/red_bringup/worlds/single_layer_maze.world world_name:=single_layer_maze_world
+    ```
 
 ---
 
