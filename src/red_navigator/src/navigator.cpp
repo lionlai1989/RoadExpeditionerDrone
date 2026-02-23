@@ -1,4 +1,5 @@
 #include <red_navigator/frontier_explorer.hpp>
+#include <red_navigator/trajectory_planner.hpp>
 
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/pose.hpp>
@@ -12,6 +13,9 @@
 #include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Vector3.h>
 #include <tf2/time.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_ros/buffer.h>
@@ -328,7 +332,7 @@ class Navigator : public rclcpp::Node {
         assert(map.info.width > 0);
         assert(map.info.height > 0);
 
-        // only continue finding goal and path in LOITER state.
+        // only continue finding goal, path and trajectory in LOITER state.
         if (this->state_ != NavState::LOITER) {
             // RCLCPP_INFO(this->get_logger(), "Not in LOITER state. Skipping explorer step.");
 
@@ -395,40 +399,17 @@ class Navigator : public rclcpp::Node {
     void reset_path() {
         std::lock_guard<std::mutex> lock(this->path_mutex_);
         this->current_path_.poses.clear();
+        this->current_path_.header.frame_id.clear();
         this->path_ready_ = false;
-        this->last_target_idx_ = 0;
-    }
-
-    void select_target(const nav_msgs::msg::Path &path,
-                       const geometry_msgs::msg::PoseStamped &current_map,
-                       geometry_msgs::msg::PoseStamped &target_map, size_t &target_idx) {
-        // when entering this function, the path must be ready.
-        assert(this->path_ready_);
-        assert(path.poses.size() > 0);
-        assert(path.header.frame_id == current_map.header.frame_id);
-
-        // Simple sequential consumption: advance one pose per call.
-        size_t next_idx = 0;
-        {
-            std::lock_guard<std::mutex> lock(this->path_mutex_);
-            if (this->last_target_idx_ < path.poses.size()) {
-                next_idx = this->last_target_idx_;
-            } else {
-                next_idx = path.poses.size() - 1;
-            }
-            if (this->last_target_idx_ + 1 < path.poses.size()) {
-                this->last_target_idx_ = this->last_target_idx_ + 1;
-            }
-        }
-
-        target_idx = next_idx;
-        target_map = path.poses[target_idx];
+        this->trajectory_ready_ = false;
+        this->trajectory_planner_.clear();
     }
 
     void compute_new_path() {
-        // when entering this function, path_ready_ must be false. and the path is already
-        // reset.
+        // when entering this function, path_ready_ and trajectory_ready_ must be false. and the
+        // path and trajectory are already reset.
         assert(!this->path_ready_);
+        assert(!this->trajectory_ready_);
 
         // when entering this function, there must be a valid goal and odom.
         assert(this->latest_estimated_odom_.has_value());
@@ -498,16 +479,17 @@ class Navigator : public rclcpp::Node {
                     std::lock_guard<std::mutex> lock(this->path_mutex_);
                     this->current_path_ = path;
                     this->path_ready_ = true;
+                    this->trajectory_ready_ = this->trajectory_planner_.plan(path);
                 }
-                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                     "Updated Nav2 path with %zu poses.", path.poses.size());
-                // only show the first and last pose
-                std::ostringstream path_ss;
-                path_ss << "Path: " << path.poses[0].pose.position.x << ", "
-                        << path.poses[0].pose.position.y << " -> "
-                        << path.poses[path.poses.size() - 1].pose.position.x << ", "
-                        << path.poses[path.poses.size() - 1].pose.position.y;
-                RCLCPP_INFO(this->get_logger(), "%s", path_ss.str().c_str());
+                if (this->path_ready_ && !this->trajectory_ready_) {
+                    const std::string err_msg =
+                        "Path is ready but trajectory planner failed to build a trajectory.";
+                    RCLCPP_FATAL(this->get_logger(), "%s", err_msg.c_str());
+                    throw std::runtime_error(err_msg);
+                }
+                RCLCPP_INFO(this->get_logger(),
+                            "Updated trajectory with %zu samples from Nav2 path with %zu poses.",
+                            this->trajectory_planner_.sample_count(), path.poses.size());
             };
 
         this->plan_client_->async_send_goal(goal_msg, send_goal_options);
@@ -516,14 +498,9 @@ class Navigator : public rclcpp::Node {
     std::pair<geometry_msgs::msg::Pose, geometry_msgs::msg::Twist>
     calculate_waypoint(const nav_msgs::msg::Odometry &odom) {
         // when entering this function, the drone must be in the NAVIGATING state, which means
-        // the path and the map must be ready.
+        // the path, trajectory and map must be ready.
         assert(this->path_ready_);
-
-        nav_msgs::msg::Path path;
-        {
-            std::lock_guard<std::mutex> lock(this->path_mutex_);
-            path = this->current_path_;
-        }
+        assert(this->trajectory_ready_);
 
         geometry_msgs::msg::PoseStamped current_odom;
         current_odom.header = odom.header;
@@ -533,26 +510,62 @@ class Navigator : public rclcpp::Node {
             current_odom, this->map_frame_id_, tf2::durationFromSec(0.2));
 
         geometry_msgs::msg::PoseStamped target_map;
-        size_t target_idx = 0;
-        this->select_target(path, current_map, target_map, target_idx);
+        geometry_msgs::msg::Twist trajectory_twist_map;
+        bool sampled = false;
+        {
+            std::lock_guard<std::mutex> lock(this->path_mutex_);
+            sampled = this->trajectory_planner_.sample_waypoint(current_map, target_map,
+                                                                trajectory_twist_map);
+        }
+        if (!sampled) {
+            target_map = current_map;
+        }
         // Nav2 path poses can be stale; align the target pose timestamp to the current map time
         // so TF does not extrapolate into the past.
         target_map.header.frame_id = this->map_frame_id_;
         target_map.header.stamp = current_map.header.stamp;
 
+        const auto map_to_odom =
+            this->tf_buffer_->lookupTransform(this->odom_frame_id_, this->map_frame_id_,
+                                              current_map.header.stamp, tf2::durationFromSec(0.2));
+
         geometry_msgs::msg::PoseStamped target_odom = this->tf_buffer_->transform(
             target_map, this->odom_frame_id_, tf2::durationFromSec(0.2));
 
-        // Use the odom-frame vector to the target waypoint so yaw matches the desired position.
+        tf2::Quaternion q_map_to_odom;
+        tf2::fromMsg(map_to_odom.transform.rotation, q_map_to_odom);
+        const tf2::Matrix3x3 rot_map_to_odom(q_map_to_odom);
+        const tf2::Vector3 velocity_map(trajectory_twist_map.linear.x,
+                                        trajectory_twist_map.linear.y,
+                                        trajectory_twist_map.linear.z);
+        const tf2::Vector3 velocity_odom = rot_map_to_odom * velocity_map;
+
+        // Prefer velocity-aligned yaw, then fall back to target position direction.
         const double dx = target_odom.pose.position.x - current_odom.pose.position.x;
         const double dy = target_odom.pose.position.y - current_odom.pose.position.y;
-        double target_yaw = std::atan2(dy, dx);
+        const double speed_odom = std::hypot(velocity_odom.x(), velocity_odom.y());
+        double target_yaw = quat_to_yaw(current_odom.pose.orientation);
+        if (speed_odom > 1e-3) {
+            target_yaw = std::atan2(velocity_odom.y(), velocity_odom.x());
+        } else if (std::hypot(dx, dy) > 1e-6) {
+            target_yaw = std::atan2(dy, dx);
+        }
 
         geometry_msgs::msg::Pose desired_pose{};
         desired_pose.position = target_odom.pose.position;
         desired_pose.position.z = this->takeoff_pose_.position.z;
         desired_pose.orientation = yaw_to_quat(target_yaw);
+
         geometry_msgs::msg::Twist desired_twist{};
+        // TODO: review this and GeometricController::compute_wrench()
+        const tf2::Quaternion q_body_in_odom =
+            tf2::Quaternion(current_odom.pose.orientation.x, current_odom.pose.orientation.y,
+                            current_odom.pose.orientation.z, current_odom.pose.orientation.w);
+        const tf2::Matrix3x3 rot_body_to_odom(q_body_in_odom);
+        const tf2::Vector3 velocity_body = rot_body_to_odom.transpose() * velocity_odom;
+        desired_twist.linear.x = velocity_body.x();
+        desired_twist.linear.y = velocity_body.y();
+        desired_twist.linear.z = velocity_body.z();
         return {desired_pose, desired_twist};
     }
 
@@ -607,8 +620,9 @@ class Navigator : public rclcpp::Node {
             return;
         }
 
-        // Only check if the goal is reached if the path is ready and in NAVIGATING state.
-        if (this->path_ready_ && this->state_ == NavState::NAVIGATING) {
+        // Only check if the goal is reached when the path and trajectory are ready and in
+        // NAVIGATING state.
+        if (this->path_ready_ && this->trajectory_ready_ && this->state_ == NavState::NAVIGATING) {
             std::lock_guard<std::mutex> lock(this->goal_mutex_);
             double goal_x_odom = 0.0;
             double goal_y_odom = 0.0;
@@ -681,7 +695,7 @@ class Navigator : public rclcpp::Node {
             break;
         }
         case NavState::NAVIGATING: {
-            if (this->path_ready_) {
+            if (this->path_ready_ && this->trajectory_ready_) {
                 std::tie(desired_pose, desired_twist) = this->calculate_waypoint(*current_odom);
             } else {
                 this->hold_x_ = current_odom->pose.pose.position.x;
@@ -695,7 +709,7 @@ class Navigator : public rclcpp::Node {
             break;
         }
         case NavState::LOITER: {
-            if (this->path_ready_) {
+            if (this->path_ready_ && this->trajectory_ready_) {
                 this->state_ = NavState::NAVIGATING;
             } else {
                 desired_pose.position.x = this->hold_x_;
@@ -750,7 +764,8 @@ class Navigator : public rclcpp::Node {
     std::mutex path_mutex_;
     nav_msgs::msg::Path current_path_;
     bool path_ready_{false};
-    size_t last_target_idx_{0};
+
+    bool trajectory_ready_{false};
 
     std::string planner_id_{"GridBased"}; // must match planner_plugins in nav2_params.yaml
     double plan_timeout_sec_{2.0};
@@ -793,6 +808,7 @@ class Navigator : public rclcpp::Node {
     NavState state_{NavState::LANDED};
 
     red::navigator::FrontierExplorer explorer_;
+    red::navigator::TrajectoryPlanner trajectory_planner_;
 };
 
 int main(int argc, char **argv) {

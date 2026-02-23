@@ -7,6 +7,8 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(actuator_msgs REQUIRED)
+find_package(eigen3_cmake_module REQUIRED)
+find_package(Eigen3 REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -31,13 +33,17 @@ ament_target_dependencies(frontier_explorer
 
 add_executable(navigator_node
   src/navigator.cpp
+  src/trajectory_planner.cpp
 )
 target_compile_features(navigator_node PUBLIC cxx_std_17)
 target_include_directories(navigator_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(navigator_node frontier_explorer)
+target_link_libraries(navigator_node
+  frontier_explorer
+  Eigen3::Eigen
+)
 ament_target_dependencies(navigator_node
   actuator_msgs
   rclcpp
