@@ -1,30 +1,33 @@
 # RoadExpeditionerDrone
 
-**RoadExpeditionerDrone** is a fully autonomous drone capable of SE(3) flight control, mapping,
+**RoadExpeditionerDrone** is a **fully autonomous** UAV capable of SE(3) flight control, mapping,
 localization, exploration, and motion planning in unknown GNSS-denied environments.
 
 ---
 
 ## Algorithm Overview
-The project covers the "full stack" of an autonomous drone, including:
+The project covers the **"full stack"** of an autonomous drone, including:
 
 - **Simultaneous Localization and Mapping (RTAB-Map)**: Provides globally consistent mapping and
   loop closure using RGB-D data to correct for odometry drift.
 
 - **Visual Inertial Odometry (OpenVINS)**: Estimates local continuous odometry at high frequency
-  using camera and IMU data.
+  using camera and IMU data. (work in progress)
 
-- **Trajectory Planning (Minimum Snap)**: Generates smooth, continuous polynomial trajectories
-  between waypoints.
+- **Trajectory Planning (Minimum Snap)**: Generates smooth, continuous polynomial trajectories.
 
-- **Path Planning (Nav2)**: Computes optimal, collision-free global and local paths navigating
-  through the generated map.
+- **Path Planning (Nav2)**: Computes optimal, collision-free global paths navigating through the
+  generated map.
 
 - **Map Exploration (Frontier Detection)**: Identifies boundaries between known free space and
-  unknown areas to dynamically guide autonomous exploration.
+  unknown areas to guide autonomous exploration.
 
 - **Flight Controller**: A low-level nonlinear tracking controller by T. Lee et al. that publishes
-  motor speed commands to accurately follow desired trajectories.
+  motor speed commands to follow desired trajectories.
+
+*(Note: It's just my personal opinion that this project covers the "full stack" of an autonomous
+drone. I'm sure there are plenty of other things missing, so please let me know if I missed
+anything. Thanks!)*
 
 ---
 
@@ -57,23 +60,26 @@ src/
   closure.
 
 - **`red_vio_estimator`**: Wraps OpenVINS to compute high-frequency visual-inertial odometry for
-  local continuous state estimation.
+  local continuous state estimation. (work in progress)
 
 ---
 
 ## How to run
 
-1. Initialize git submodule OpenVINS at `src/open_vins` before building
+- Grab the simulation world
+  [here](https://drive.google.com/file/d/14_7dYjFfjNmqW4hYJAOBKtPSC8jPMvhD/view?usp=sharing), unzip
+  it, and move the `worlds/` folder into `src/red_bringup/`.
+
+- Initialize git submodule OpenVINS at `src/open_vins` before building
     ```bash
     git submodule update --init --recursive
     ```
 
-2. Activate Environment: Open IDE and run "Dev Containers: Rebuild and Reopen in Container"
+- Activate Environment: Open IDE and run "Dev Containers: Rebuild and Reopen in Container"
 
-3. Build the workspace and launch
+- Build the workspace and launch
     ```bash
-    rm -rf build install log ~/.ros/rtabmap.db \
-    && source /opt/ros/humble/setup.bash \
+    source /opt/ros/humble/setup.bash \
     && colcon build --base-paths src --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     && source install/setup.bash \
     && ros2 launch red_bringup simulation.launch.py world_path:=src/red_bringup/worlds/single_layer_maze.world world_name:=single_layer_maze_world
@@ -112,16 +118,19 @@ For quick copy, an example one‑line BibTeX is:
 
 ## License and third‑party assets
 
-1. **Project source code license**: This repository is licensed under the GNU General Public
+- **Project source code license**: This repository is licensed under the GNU General Public
    License v3.0 (GPL-3.0). See `LICENSE`.
 
-2. **Why GPL-3.0**: This project integrates OpenVINS (`src/open_vins`), so the combined project
-   is distributed under GPL-3.0 terms.
-
-3. **PX4 model assets**: Files in `src/red_gz_plugin/models/` (for example `x500`,
+- **PX4 model assets**: Files in `src/red_gz_plugin/models/` (for example `x500`,
    `x500_base`, `x500_depth`, and `OakD-Lite`) are sourced from
    [PX4-gazebo-models](https://github.com/PX4/PX4-gazebo-models) and remain under their original
    BSD-3-Clause licenses. The original license files are preserved in each model directory.
 
-4. **Compatibility note**: BSD-3-Clause third-party assets are compatible with distribution
-   alongside GPL-3.0 project code, provided their copyright and license notices are retained.
+- **Celebrity Dataset**: Downloaded from
+  [Kaggle](https://www.kaggle.com/datasets/jessicali9530/celeba-dataset) and [MMLAB,
+  CUHK](http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html). Original authors: Ziwei Liu, Ping Luo,
+  Xiaogang Wang, and Xiaoou Tang.
+
+- **Van Gogh Starry Night**: Downloaded from
+  [Pixabay](https://pixabay.com/illustrations/starry-night-vincent-van-gough-1093721/). Artist:
+  Vincent van Gogh, Uploader: Perlinator.

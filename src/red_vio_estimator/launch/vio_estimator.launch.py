@@ -109,6 +109,10 @@ def generate_launch_description():
             "' + '/link/camera_link/sensor/IMX214/camera_info:=rgb/camera_info'",
         ]
     )
+    # Keep IMU and RGB in separate bridge processes: IMU is high-rate and
+    # timing-critical for VIO, while images are lower-rate but CPU-heavy.
+    # Separation avoids image-load contention (callbacks/serialization), reducing
+    # IMU latency/jitter and improving estimator stability under load.
     imu_bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",

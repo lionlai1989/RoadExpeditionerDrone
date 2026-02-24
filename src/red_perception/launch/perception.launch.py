@@ -53,10 +53,10 @@ def generate_launch_description():
             "' + '/link/camera_link/sensor/StereoOV7251/camera_info:=depth/camera_info'",
         ]
     )
-    ros_gz_bridge = Node(
+    depth_bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
-        name="sensor_bridge",
+        name="depth_bridge",
         namespace=drone_id,
         parameters=[{"use_sim_time": True}],
         arguments=[
@@ -170,7 +170,7 @@ def generate_launch_description():
         [
             drone_id_arg,
             world_name_arg,
-            ros_gz_bridge,
+            depth_bridge,
             static_tf_base_link_to_imu_sensor,
             rtabmap_launch,
         ]

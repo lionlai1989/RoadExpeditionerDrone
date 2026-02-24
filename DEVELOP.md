@@ -122,6 +122,7 @@ rqt_graph
 /drone_1/trackhist/theora
 /drone_1/unsmoothed_plan
 /drone_1/user_data_async
+/drone_1/visual_path
 /initialpose
 /move_base_simple/goal
 /parameter_events
@@ -133,6 +134,7 @@ rqt_graph
 - List all ROS nodes:
 ```
 ~/RoadExpeditionerDrone$ ros2 node list
+/drone_1/depth_bridge
 /drone_1/flight_interface
 /drone_1/geometric_controller_node
 /drone_1/global_costmap/global_costmap
@@ -146,43 +148,32 @@ rqt_graph
 /drone_1/rgb_bridge
 /drone_1/rtabmap
 /drone_1/rviz2
-/drone_1/sensor_bridge
 /drone_1/static_tf_base_link_to_StereoOV7251
 /drone_1/static_tf_base_link_to_camera_link
 /drone_1/static_tf_base_link_to_imu_sensor
 /drone_1/static_tf_base_link_to_imx214
-/drone_1/transform_listener_impl_57c2a061ec40
-/drone_1/transform_listener_impl_596512edca60
-/drone_1/transform_listener_impl_60869eb3d6c0
-/drone_1/transform_listener_impl_62a14f2c1210
+/drone_1/transform_listener_impl_55e163ea3220
+/drone_1/transform_listener_impl_56a3497839a0
+/drone_1/transform_listener_impl_58208091ee00
+/drone_1/transform_listener_impl_650ded189030
 /ros_gz_bridge_clock
 ```
 
 - List all ROS transforms:
 ```
+# save to frames_*.gv
 ~/RoadExpeditionerDrone$ ros2 run tf2_tools view_frames
-[INFO] [1771816989.069583032] [view_frames]: Listening to tf data for 5.0 seconds...
-[INFO] [1771816994.071858850] [view_frames]: Generating graph in frames.pdf file...
-[INFO] [1771816994.074868930] [view_frames]: Result:tf2_msgs.srv.FrameGraph_Response(frame_yaml="
-    drone_1/odom: \n  parent: 'drone_1/map'\n  broadcaster: 'default_authority'\n  rate: 32.865\n  most_recent_transform: 77.305000\n  oldest_transform: 74.384000\n  buffer_length: 2.921\n
-    drone_1/camera_link/StereoOV7251: \n  parent: 'drone_1/base_link'\n  broadcaster: 'default_authority'\n  rate: 10000.000\n  most_recent_transform: 0.000000\n  oldest_transform: 0.000000\n  buffer_length: 0.000\n
-    drone_1/base_link: \n  parent: 'drone_1/odom'\n  broadcaster: 'default_authority'\n  rate: 250.342\n  most_recent_transform: 77.216000\n  oldest_transform: 74.288000\n  buffer_length: 2.928\n
-    drone_1/camera_link/IMX214: \n  parent: 'drone_1/base_link'\n  broadcaster: 'default_authority'\n  rate: 10000.000\n  most_recent_transform: 0.000000\n  oldest_transform: 0.000000\n  buffer_length: 0.000\n
-    drone_1/base_link/imu_sensor: \n  parent: 'drone_1/base_link'\n  broadcaster: 'default_authority'\n  rate: 10000.000\n  most_recent_transform: 0.000000\n  oldest_transform: 0.000000\n  buffer_length: 0.000\n
-    drone_1/camera_link: \n  parent: 'drone_1/base_link'\n  broadcaster: 'default_authority'\n  rate: 10000.000\n  most_recent_transform: 0.000000\n  oldest_transform: 0.000000\n  buffer_length: 0.000\n
-")
-
 ```
 
 - Get frequency of a ROS topic:
 ```
 ~/RoadExpeditionerDrone$ ros2 topic hz /drone_1/odometry
-average rate: 217.910
-        min: 0.001s max: 0.020s std dev: 0.00220s window: 219
-average rate: 226.386
-        min: 0.001s max: 0.020s std dev: 0.00173s window: 454
-average rate: 229.374
-        min: 0.001s max: 0.025s std dev: 0.00166s window: 690
+average rate: 162.661
+        min: 0.002s max: 0.174s std dev: 0.01471s window: 164
+average rate: 196.888
+        min: 0.001s max: 0.174s std dev: 0.00957s window: 396
+average rate: 199.207
+        min: 0.001s max: 0.174s std dev: 0.00841s window: 600
 ```
 
 - List all Gazebo topics:
