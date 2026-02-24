@@ -1,0 +1,20 @@
+%YAML:1.0
+
+cam0:
+  # T_imu_cam: rotation from camera to IMU (R_CtoI), position of camera in IMU (p_CinI)
+  # Derived from static TF in red_bringup: base_link -> camera_link/IMX214.
+  T_imu_cam:
+    # NOTE: OpenVINS expects R_CtoI (camera/optical -> IMU/body).
+    # The previous matrix was R_ItoC, which is the transpose/inverse and destabilizes VIO.
+    - [0.0, 0.0, 1.0, 0.13233]
+    - [-1.0, 0.0, 0.0, 0.0]
+    - [0.0, -1.0, 0.0, 0.50278]
+    - [0.0, 0.0, 0.0, 1.0]
+  cam_overlaps: []
+  camera_model: pinhole
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0]
+  distortion_model: radtan
+  # IMX214 in OakD-Lite model.sdf: width=640, height=480, horizontal_fov=1.274 rad
+  intrinsics: [432.50, 432.50, 320.0, 240.0] # fu, fv, cu, cv
+  resolution: [640, 480]
+  rostopic: /cam0/image_raw

@@ -1,52 +1,15 @@
 /**
-Adapt either groundtruth odometry or OpenVINS odometry into a stable `odometry` + `odom->base_link`
-interface for the rest of the system.
-
-Startup behavior: TODO: verify if this is correct?
-1) Bootstrap from Gazebo groundtruth:
-   T_odom_base = inverse(T_world_base0) * T_world_base
-2) Once OpenVINS starts publishing valid odometry, switch permanently to OpenVINS.
-3) Freeze one alignment transform at switch time to keep outputs continuous:
-   T_odom_ovGlobal = T_odom_base_atSwitch * inverse(T_ovGlobal_imu_atSwitch)
-4) After switch:
-   T_odom_base = T_odom_ovGlobal * T_ovGlobal_imu
-
-We assume IMU and base_link are colocated in this simulation model.
-
-The first received groundtruth pose is used as the odom-frame origin:
-  T_odom_base = inverse(T_world_base0) * T_world_base
-This makes odometry start at (0, 0, 0) and identity orientation at initialization.
-The normalized odometry is published on `odometry`, and the same pose is broadcast as TF
-`odom -> base_link`.
-
-- **`world`**: Gazebo's absolute coordinate system. Ground truth is naturally relative to this.
-- **`map`**: RTAB-Map's globally consistent frame, which acts as the top-level fixed frame in the
-  real world ( correcting for odometry drift).
-- **`odom`**: A local, continuous frame. By convention, this starts at `(0, 0, 0)` when the robot's
-  VIO or Odometry system initializes, regardless of where the robot powers on.
-
-When using `groundtruth`, the Gazebo bridge outputs the absolute pose (`world -> base_link`). By
-taking that absolute pose and directly naming its frame `odom`, the system is forcing `odom` to be
-identical to the absolute `world` pose.
-Conversely, OpenVINS follows standard conventions: it initializes at `(0, 0, 0)` in its local `odom`
-frame, completely ignorant of its absolute `world` start location.
-
-**The Danger**: If downstream nodes (like `red_navigator` or `geometric_controller`) were to
-subscribe to `/odometry` assuming it gives them their absolute world location, they would function
-perfectly when `vio_source == groundtruth`. However, the moment you switch to `openvins`,
-those nodes will suddenly receive `(0, 0, 0)` for their position, causing catastrophic behavior
-(e.g. attempting to violently fly 10 meters away to reach an absolute waypoint).
-
-To make the transition strictly "plug-and-play", we must ensure that `groundtruth` mimics `openvins`
-perfectly. This means `groundtruth` odometry MUST also start at `(0, 0, 0)` in the `odom` frame.
-
-This forces all downstream modules to use proper `tf2` lookups against the `map` frame for global
-navigation goals, rather than cheating by reading the absolute `/odometry` topic.
+ * `odom_adapter` provides a unified, system-facing odometry interface:
+ *   - Topic: `/<drone_id>/odometry`
+ *   - TF: `/<drone_id>/odom -> /<drone_id>/base_link`
+ *
+ * In `openvins` mode, it bootstraps from Gazebo groundtruth odometry to ensure stable
+ * initialization, then seamlessly transitions to OpenVINS odometry once it evaluates the stream as
+ * stable.
  */
 
 #include <cassert>
 #include <cmath>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <string>
@@ -75,12 +38,61 @@ class OdomAdapter : public rclcpp::Node {
     }
 
   private:
+    static constexpr int kOpenvinsMinStableMsgCount = 1000; // 3000 not work
+    static constexpr double kOpenvinsMaxStepMeters = 1.0;
+
+    static bool is_finite(const double value) { return std::isfinite(value); }
+
+    static bool is_pose_finite(const geometry_msgs::msg::Pose &pose) {
+        return is_finite(pose.position.x) && is_finite(pose.position.y) &&
+               is_finite(pose.position.z) && is_finite(pose.orientation.x) &&
+               is_finite(pose.orientation.y) && is_finite(pose.orientation.z) &&
+               is_finite(pose.orientation.w);
+    }
+
+    static double position_step_m(const geometry_msgs::msg::Pose &a,
+                                  const geometry_msgs::msg::Pose &b) {
+        const double dx = a.position.x - b.position.x;
+        const double dy = a.position.y - b.position.y;
+        const double dz = a.position.z - b.position.z;
+        return std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
     static tf2::Transform pose_to_transform(const geometry_msgs::msg::Pose &pose) {
         tf2::Quaternion q(pose.orientation.x, pose.orientation.y, pose.orientation.z,
                           pose.orientation.w);
-        q.normalize();
+        const double length2 = q.length2();
+        if (!is_finite(length2) || length2 < 1e-12) {
+            q = tf2::Quaternion::getIdentity();
+        } else {
+            q.normalize();
+        }
         const tf2::Vector3 t(pose.position.x, pose.position.y, pose.position.z);
         return tf2::Transform(q, t);
+    }
+
+    bool update_openvins_gate(const geometry_msgs::msg::Pose &pose) {
+        assert(is_pose_finite(pose));
+
+        if (openvins_valid_msg_count_ == 0) {
+            prev_openvins_pose_ = pose;
+            openvins_valid_msg_count_ = 1;
+            return false;
+        }
+
+        const double step = position_step_m(pose, prev_openvins_pose_);
+        assert(is_finite(step));
+        prev_openvins_pose_ = pose;
+        if (step > kOpenvinsMaxStepMeters) {
+            openvins_valid_msg_count_ = 1;
+            RCLCPP_WARN_THROTTLE(
+                get_logger(), *get_clock(), 2000,
+                "OpenVINS handoff gate rejected discontinuous sample (step=%.3f m)", step);
+            return false;
+        }
+
+        ++openvins_valid_msg_count_;
+        return openvins_valid_msg_count_ >= kOpenvinsMinStableMsgCount;
     }
 
     void publish_odom_and_tf(const nav_msgs::msg::Odometry &source_msg,
@@ -123,12 +135,38 @@ class OdomAdapter : public rclcpp::Node {
         }
 
         const tf2::Transform odom_to_base = world_to_base0_inverse_ * world_to_base;
+        latest_groundtruth_odom_to_base_ = odom_to_base;
         publish_odom_and_tf(*msg, odom_to_base);
     }
 
     void handle_openvins_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
-        ;
-        ;
+        assert(is_pose_finite(msg->pose.pose));
+
+        const tf2::Transform ov_global_to_imu = pose_to_transform(msg->pose.pose);
+
+        if (!switched_to_openvins_) {
+            if (!update_openvins_gate(msg->pose.pose)) {
+                return;
+            }
+
+            assert(origin_initialized_);
+            // Freeze one alignment transform at handoff to keep odom output continuous.
+            odom_to_ov_global_ = latest_groundtruth_odom_to_base_ * ov_global_to_imu.inverse();
+            switched_to_openvins_ = true;
+            RCLCPP_INFO(get_logger(), "\x1b[1;36mSwitched odometry source to OpenVINS\x1b[0m");
+        } else {
+            const double step = position_step_m(msg->pose.pose, prev_openvins_pose_);
+            assert(is_finite(step));
+            if (step > kOpenvinsMaxStepMeters) {
+                RCLCPP_WARN_THROTTLE(
+                    get_logger(), *get_clock(), 2000,
+                    "Detected discontinuous OpenVINS sample after handoff (step=%.3f m)", step);
+            }
+            prev_openvins_pose_ = msg->pose.pose;
+        }
+
+        const tf2::Transform odom_to_base = odom_to_ov_global_ * ov_global_to_imu;
+        publish_odom_and_tf(*msg, odom_to_base);
     }
 
     std::string odom_frame_id_;
@@ -136,8 +174,12 @@ class OdomAdapter : public rclcpp::Node {
 
     bool origin_initialized_ = false;
     tf2::Transform world_to_base0_inverse_;
+    tf2::Transform latest_groundtruth_odom_to_base_{tf2::Transform::getIdentity()};
+    tf2::Transform odom_to_ov_global_{tf2::Transform::getIdentity()};
 
     bool switched_to_openvins_ = false;
+    int openvins_valid_msg_count_ = 0;
+    geometry_msgs::msg::Pose prev_openvins_pose_;
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr groundtruth_subscription_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr openvins_subscription_;
