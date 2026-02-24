@@ -75,7 +75,7 @@ src/
     git submodule update --init --recursive
     ```
 
-- Activate Environment: Open IDE and run "Dev Containers: Rebuild and Reopen in Container"
+- Build and exec into the container
 
 - Build the workspace and launch
     ```bash
