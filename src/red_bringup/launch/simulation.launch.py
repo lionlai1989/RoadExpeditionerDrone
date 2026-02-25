@@ -30,11 +30,14 @@ DRONE_LAUNCH_START_TIME = 8.0
 DRONE_LAUNCH_CURSOR = DRONE_LAUNCH_START_TIME
 # Define individual launch durations for each action
 SPAWN_LAUNCH_DURATION = 5.0
-VIO_ESTIMATOR_LAUNCH_DURATION = 5.0
-PERCEPTION_LAUNCH_DURATION = 3.0
-NAVIGATOR_LAUNCH_DURATION = 3.0
-GEOMETRIC_CONTROLLER_LAUNCH_DURATION = 2.0
 RVIZ_LAUNCH_DURATION = 2.0
+
+# MAGIC NUMBER (slow is smooth) that make OpenVINS init successful. DO NOT CHANGE IT.
+VIO_ESTIMATOR_LAUNCH_DURATION = 20.0
+
+GEOMETRIC_CONTROLLER_LAUNCH_DURATION = 2.0
+NAVIGATOR_LAUNCH_DURATION = 5.0
+PERCEPTION_LAUNCH_DURATION = 3.0
 
 
 def parse_initial_pose(pose_str):
@@ -89,45 +92,6 @@ def create_drone_launch(
         output="screen",
     )
 
-    vio_estimator_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            str(Path(pkg_red_vio_estimator) / "launch" / "vio_estimator.launch.py")
-        ),
-        launch_arguments={
-            "drone_id": drone_id,
-            "world_name": LaunchConfiguration("world_name"),
-        }.items(),
-    )
-
-    perception_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            str(Path(pkg_red_perception) / "launch" / "perception.launch.py")
-        ),
-        launch_arguments={
-            "drone_id": drone_id,
-            "world_name": LaunchConfiguration("world_name"),
-        }.items(),
-    )
-
-    navigator_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            str(Path(pkg_red_navigator) / "launch" / "navigator.launch.py")
-        ),
-        launch_arguments={
-            "drone_id": drone_id,
-            "hover_height": drone_config["hover_height"],
-        }.items(),
-    )
-
-    geometric_controller_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            str(Path(pkg_red_geometric_controller) / "launch" / "geometric_controller.launch.py")
-        ),
-        launch_arguments={
-            "drone_id": drone_id,
-        }.items(),
-    )
-
     # In "default.rviz", I hardcode `Fixed Frame: drone_1/map`. Ignore it for now.
     rviz2_node = Node(
         package="rviz2",
@@ -145,6 +109,45 @@ def create_drone_launch(
         parameters=[{"use_sim_time": True}],
     )
 
+    vio_estimator_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            str(Path(pkg_red_vio_estimator) / "launch" / "vio_estimator.launch.py")
+        ),
+        launch_arguments={
+            "drone_id": drone_id,
+            "world_name": LaunchConfiguration("world_name"),
+        }.items(),
+    )
+
+    geometric_controller_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            str(Path(pkg_red_geometric_controller) / "launch" / "geometric_controller.launch.py")
+        ),
+        launch_arguments={
+            "drone_id": drone_id,
+        }.items(),
+    )
+
+    navigator_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            str(Path(pkg_red_navigator) / "launch" / "navigator.launch.py")
+        ),
+        launch_arguments={
+            "drone_id": drone_id,
+            "hover_height": drone_config["hover_height"],
+        }.items(),
+    )
+
+    perception_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            str(Path(pkg_red_perception) / "launch" / "perception.launch.py")
+        ),
+        launch_arguments={
+            "drone_id": drone_id,
+            "world_name": LaunchConfiguration("world_name"),
+        }.items(),
+    )
+
     launch_actions = []
 
     # Start per-drone launches after Gazebo is up.
@@ -156,20 +159,20 @@ def create_drone_launch(
 
     launch_actions.append(TimerAction(period=current_time, actions=static_tf_launch))
 
+    launch_actions.append(TimerAction(period=current_time, actions=[rviz2_node]))
+    current_time += RVIZ_LAUNCH_DURATION
+
     launch_actions.append(TimerAction(period=current_time, actions=[vio_estimator_launch]))
     current_time += VIO_ESTIMATOR_LAUNCH_DURATION
-
-    launch_actions.append(TimerAction(period=current_time, actions=[perception_launch]))
-    current_time += PERCEPTION_LAUNCH_DURATION
-
-    launch_actions.append(TimerAction(period=current_time, actions=[navigator_launch]))
-    current_time += NAVIGATOR_LAUNCH_DURATION
 
     launch_actions.append(TimerAction(period=current_time, actions=[geometric_controller_launch]))
     current_time += GEOMETRIC_CONTROLLER_LAUNCH_DURATION
 
-    launch_actions.append(TimerAction(period=current_time, actions=[rviz2_node]))
-    current_time += RVIZ_LAUNCH_DURATION
+    launch_actions.append(TimerAction(period=current_time, actions=[navigator_launch]))
+    current_time += NAVIGATOR_LAUNCH_DURATION
+
+    launch_actions.append(TimerAction(period=current_time, actions=[perception_launch]))
+    current_time += PERCEPTION_LAUNCH_DURATION
 
     # Advance global cursor so next drone launches later.
     DRONE_LAUNCH_CURSOR = current_time

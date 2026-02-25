@@ -720,6 +720,8 @@ class Navigator : public rclcpp::Node {
         geometry_msgs::msg::Twist desired_twist{};
         switch (this->state_) {
         case NavState::LANDED: {
+            // During takeoff, is there map information? If yes, use the map information to set the
+            // takeoff xyz position. If no, use the odom position as the takeoff position.
             this->takeoff_pose_.position.x = current_odom->pose.pose.position.x;
             this->takeoff_pose_.position.y = current_odom->pose.pose.position.y;
             this->takeoff_pose_.position.z =

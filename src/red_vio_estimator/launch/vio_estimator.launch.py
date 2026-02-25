@@ -159,6 +159,7 @@ def generate_launch_description():
                 "use_sim_time": True,
                 "odom_frame_id": odom_frame_id,
                 "base_frame_id": base_frame_id,
+                "vio_source": vio_source,
             }
         ],
         output="screen",

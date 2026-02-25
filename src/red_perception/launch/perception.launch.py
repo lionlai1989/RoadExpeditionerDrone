@@ -127,7 +127,7 @@ def generate_launch_description():
                 "subscribe_scan": False,
                 "approx_sync": True,
                 "use_sim_time": True,
-                "sync_queue_size": 10,
+                "sync_queue_size": 3,  # Small to favor the latest RGB-D/odom data.
                 "wait_for_transform": 0.5,
                 "database_path": rtabmap_db_path,
                 # RTAB-Map parameters

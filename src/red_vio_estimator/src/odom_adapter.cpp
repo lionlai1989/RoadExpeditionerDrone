@@ -3,9 +3,8 @@
  *   - Topic: `/<drone_id>/odometry`
  *   - TF: `/<drone_id>/odom -> /<drone_id>/base_link`
  *
- * In `openvins` mode, it bootstraps from Gazebo groundtruth odometry to ensure stable
- * initialization, then seamlessly transitions to OpenVINS odometry once it evaluates the stream as
- * stable.
+ * In `openvins` mode, it bootstraps from Gazebo groundtruth odometry. After odomimu callback is
+ * triggered, it transitions to OpenVINS odometry once it evaluates the odomimu stream as stable.
  */
 
 #include <cassert>
@@ -27,13 +26,25 @@ class OdomAdapter : public rclcpp::Node {
           tf_broadcaster_(std::make_shared<tf2_ros::TransformBroadcaster>(this)) {
         odom_frame_id_ = declare_parameter<std::string>("odom_frame_id");
         base_frame_id_ = declare_parameter<std::string>("base_frame_id");
+        vio_source_ = declare_parameter<std::string>("vio_source");
 
+        if (vio_source_ == "openvins") {
+            openvins_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
+                "odomimu", rclcpp::QoS(50),
+                std::bind(&OdomAdapter::handle_openvins_odom, this, std::placeholders::_1));
+            RCLCPP_INFO(this->get_logger(),
+                        "OdomAdapter source: openvins (subscribing to odomimu)");
+        }
+
+        // For some unknown reason, groundtruth_odometry must be subscribed and published even in
+        // openvins mode so that openvins can initialize successfully. That is, odomimu callback
+        // will be triggered.
         groundtruth_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
             "groundtruth_odometry", rclcpp::QoS(50),
             std::bind(&OdomAdapter::handle_groundtruth_odom, this, std::placeholders::_1));
-        openvins_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
-            "odomimu", rclcpp::QoS(50),
-            std::bind(&OdomAdapter::handle_openvins_odom, this, std::placeholders::_1));
+        RCLCPP_INFO(this->get_logger(),
+                    "OdomAdapter source: groundtruth (subscribing to groundtruth_odometry)");
+
         odom_publisher_ = create_publisher<nav_msgs::msg::Odometry>("odometry", rclcpp::QoS(50));
     }
 
@@ -125,14 +136,14 @@ class OdomAdapter : public rclcpp::Node {
     }
 
     void handle_groundtruth_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
-        if (switched_to_openvins_) {
+        if (openvins_origin_initialized_) {
             return;
         }
 
         const tf2::Transform world_to_base = pose_to_transform(msg->pose.pose);
-        if (!origin_initialized_) {
+        if (!groundtruth_origin_initialized_) {
             world_to_base0_inverse_ = world_to_base.inverse();
-            origin_initialized_ = true;
+            groundtruth_origin_initialized_ = true;
         }
 
         const tf2::Transform odom_to_base = world_to_base0_inverse_ * world_to_base;
@@ -143,28 +154,29 @@ class OdomAdapter : public rclcpp::Node {
         assert(is_pose_finite(msg->pose.pose));
 
         const tf2::Transform ov_global_to_imu = pose_to_transform(msg->pose.pose);
-        if (!switched_to_openvins_) {
+        if (!openvins_origin_initialized_) {
             if (!update_openvins_gate(msg->pose.pose)) {
                 return;
             }
-
-            assert(origin_initialized_);
-            switched_to_openvins_ = true;
+            odom_to_openvins_global_ = ov_global_to_imu.inverse();
+            openvins_origin_initialized_ = true;
             RCLCPP_INFO(get_logger(), "\x1b[1;36mSwitched odometry source to OpenVINS\x1b[0m");
         }
 
-        // Confirm that why global==odom, imu==base_link. Is it correct?
-        const tf2::Transform odom_to_base = ov_global_to_imu;
+        const tf2::Transform odom_to_base = odom_to_openvins_global_ * ov_global_to_imu;
         publish_odom_and_tf(*msg, odom_to_base);
     }
 
     std::string odom_frame_id_;
     std::string base_frame_id_;
 
-    bool origin_initialized_ = false;
-    tf2::Transform world_to_base0_inverse_;
+    std::string vio_source_;
 
-    bool switched_to_openvins_ = false;
+    bool groundtruth_origin_initialized_ = false;
+    tf2::Transform world_to_base0_inverse_;
+    bool openvins_origin_initialized_ = false;
+    tf2::Transform odom_to_openvins_global_;
+
     int openvins_valid_msg_count_ = 0;
     geometry_msgs::msg::Pose prev_openvins_pose_;
 
