@@ -85,9 +85,10 @@ class OdomAdapter : public rclcpp::Node {
         prev_openvins_pose_ = pose;
         if (step > kOpenvinsMaxStepMeters) {
             openvins_valid_msg_count_ = 1;
-            RCLCPP_WARN_THROTTLE(
-                get_logger(), *get_clock(), 2000,
-                "OpenVINS handoff gate rejected discontinuous sample (step=%.3f m)", step);
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 500,
+                                 "\x1b[1;33mOpenVINS handoff gate rejected discontinuous sample "
+                                 "(step=%.3f m)\x1b[0m",
+                                 step);
             return false;
         }
 
@@ -135,7 +136,6 @@ class OdomAdapter : public rclcpp::Node {
         }
 
         const tf2::Transform odom_to_base = world_to_base0_inverse_ * world_to_base;
-        latest_groundtruth_odom_to_base_ = odom_to_base;
         publish_odom_and_tf(*msg, odom_to_base);
     }
 
@@ -143,29 +143,18 @@ class OdomAdapter : public rclcpp::Node {
         assert(is_pose_finite(msg->pose.pose));
 
         const tf2::Transform ov_global_to_imu = pose_to_transform(msg->pose.pose);
-
         if (!switched_to_openvins_) {
             if (!update_openvins_gate(msg->pose.pose)) {
                 return;
             }
 
             assert(origin_initialized_);
-            // Freeze one alignment transform at handoff to keep odom output continuous.
-            odom_to_ov_global_ = latest_groundtruth_odom_to_base_ * ov_global_to_imu.inverse();
             switched_to_openvins_ = true;
             RCLCPP_INFO(get_logger(), "\x1b[1;36mSwitched odometry source to OpenVINS\x1b[0m");
-        } else {
-            const double step = position_step_m(msg->pose.pose, prev_openvins_pose_);
-            assert(is_finite(step));
-            if (step > kOpenvinsMaxStepMeters) {
-                RCLCPP_WARN_THROTTLE(
-                    get_logger(), *get_clock(), 2000,
-                    "Detected discontinuous OpenVINS sample after handoff (step=%.3f m)", step);
-            }
-            prev_openvins_pose_ = msg->pose.pose;
         }
 
-        const tf2::Transform odom_to_base = odom_to_ov_global_ * ov_global_to_imu;
+        // Confirm that why global==odom, imu==base_link. Is it correct?
+        const tf2::Transform odom_to_base = ov_global_to_imu;
         publish_odom_and_tf(*msg, odom_to_base);
     }
 
@@ -174,8 +163,6 @@ class OdomAdapter : public rclcpp::Node {
 
     bool origin_initialized_ = false;
     tf2::Transform world_to_base0_inverse_;
-    tf2::Transform latest_groundtruth_odom_to_base_{tf2::Transform::getIdentity()};
-    tf2::Transform odom_to_ov_global_{tf2::Transform::getIdentity()};
 
     bool switched_to_openvins_ = false;
     int openvins_valid_msg_count_ = 0;
