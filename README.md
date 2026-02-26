@@ -3,6 +3,8 @@
 **RoadExpeditionerDrone** is a **fully autonomous** UAV capable of SE(3) flight control, mapping,
 localization, exploration, and motion planning in unknown GNSS-denied environments.
 
+https://github.com/user-attachments/assets/8fca52ad-3435-4a47-8245-756b2bbf219e
+
 ---
 
 ## Algorithm Overview
