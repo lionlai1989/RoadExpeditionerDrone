@@ -49,7 +49,7 @@ class OdomAdapter : public rclcpp::Node {
     }
 
   private:
-    static constexpr int kOpenvinsMinStableMsgCount = 1000; // 3000 not work
+    static constexpr int kOpenvinsMinStableMsgCount = 100; // 3000 not work
     static constexpr double kOpenvinsMaxStepMeters = 1.0;
 
     static bool is_finite(const double value) { return std::isfinite(value); }
@@ -155,15 +155,18 @@ class OdomAdapter : public rclcpp::Node {
 
         const tf2::Transform ov_global_to_imu = pose_to_transform(msg->pose.pose);
         if (!openvins_origin_initialized_) {
-            if (!update_openvins_gate(msg->pose.pose)) {
-                return;
-            }
-            odom_to_openvins_global_ = ov_global_to_imu.inverse();
+            // The 1st data looks pretty good. There is no need to gate here.
+            // x=0.000, y=-0.001, z=0.008
+            // if (!update_openvins_gate(msg->pose.pose))
+            //     return;
+            // do i really need to apply the first inverse transform? openvins already has its own
+            // global frame.
+            // odom_to_openvins_global_ = ov_global_to_imu.inverse();
             openvins_origin_initialized_ = true;
             RCLCPP_INFO(get_logger(), "\x1b[1;36mSwitched odometry source to OpenVINS\x1b[0m");
         }
 
-        const tf2::Transform odom_to_base = odom_to_openvins_global_ * ov_global_to_imu;
+        const tf2::Transform odom_to_base = ov_global_to_imu;
         publish_odom_and_tf(*msg, odom_to_base);
     }
 

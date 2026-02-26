@@ -35,6 +35,7 @@ def generate_launch_description():
         arguments=["--ros-args", "--log-level", "warn"],
     )
 
+    # TODO: figure out why it always prints something after rtabmap launch
     lifecycle_manager = Node(
         package="nav2_lifecycle_manager",
         executable="lifecycle_manager",

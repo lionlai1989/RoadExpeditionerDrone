@@ -582,22 +582,6 @@ class Navigator : public rclcpp::Node {
         return std::abs(this->spin_accumulated_) >= kTwoPi;
     }
 
-    // Capture the current hold point in the map frame.
-    //
-    // Why this exists:
-    // - SPINONCE and LOITER are conceptually "stay at one global location".
-    // - OpenVINS odom can drift over time, especially during pure rotation.
-    // - If we store hold position in odom, the hold point drifts with odom and the drone follows
-    // it.
-    //
-    // Strategy:
-    // - Take the current position from odom.
-    // - Transform that position into map at the same timestamp.
-    // - Store map XY as the authoritative hold anchor.
-    //
-    // Result:
-    // - The hold anchor remains globally stable (map frame) while odom drifts.
-    // - Later, each control cycle converts this map anchor back into odom for the controller.
     void lock_hold_position_in_map(const nav_msgs::msg::Odometry &current_odom) {
         assert(!this->odom_frame_id_.empty());
         assert(!this->map_frame_id_.empty());
@@ -624,20 +608,6 @@ class Navigator : public rclcpp::Node {
         this->hold_y_map_ = hold_map.point.y;
     }
 
-    // Convert the stored map-frame hold anchor into an odom-frame position command.
-    //
-    // Why this exists:
-    // - The geometric controller consumes desired pose in odom coordinates.
-    // - Our authoritative hold anchor is stored in map to reject odom drift.
-    //
-    // Strategy:
-    // - Rebuild the hold point in map using the stored hold_x_map_/hold_y_map_.
-    // - Transform map -> odom at the current odometry timestamp.
-    // - Fill desired_pose position with the transformed point.
-    //
-    // Result:
-    // - Commands remain in odom (controller-compatible), but represent a map-stationary target.
-    // - During drift, the commanded odom coordinates update automatically to counteract drift.
     void fill_desired_hold_pose_from_map(const nav_msgs::msg::Odometry &current_odom,
                                          geometry_msgs::msg::Pose &desired_pose) {
 
@@ -737,7 +707,9 @@ class Navigator : public rclcpp::Node {
             const float dx = current_odom->pose.pose.position.x - this->takeoff_pose_.position.x;
             const float dy = current_odom->pose.pose.position.y - this->takeoff_pose_.position.y;
             const float dz = current_odom->pose.pose.position.z - this->takeoff_pose_.position.z;
-            if (std::sqrt(dx * dx + dy * dy + dz * dz) < this->takeoff_tolerance_) {
+            // TODO: Think carefully about the takeoff tolerance and map
+            if (std::sqrt(dx * dx + dy * dy + dz * dz) < this->takeoff_tolerance_ &&
+                this->map_ready_) {
                 this->lock_hold_position_in_map(*current_odom);
                 this->hold_yaw_ = quat_to_yaw(current_odom->pose.pose.orientation);
                 this->start_spin(this->hold_yaw_);
