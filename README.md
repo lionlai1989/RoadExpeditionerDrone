@@ -14,13 +14,13 @@ The project covers the **"full stack"** of an autonomous drone, including:
 - **Visual Inertial Odometry (OpenVINS)**: Estimates local continuous odometry at high frequency
   using camera and IMU data. (work in progress)
 
-- **Trajectory Planning (Minimum Snap)**: Generates smooth, continuous polynomial trajectories.
+- **Map Exploration (Frontier Detection)**: Identifies boundaries between known free space and
+  unknown areas to guide autonomous exploration.
 
 - **Path Planning (Nav2)**: Computes optimal, collision-free global paths navigating through the
   generated map.
 
-- **Map Exploration (Frontier Detection)**: Identifies boundaries between known free space and
-  unknown areas to guide autonomous exploration.
+- **Trajectory Planning (Minimum Snap)**: Generates smooth, continuous polynomial trajectories.
 
 - **Flight Controller**: A low-level nonlinear tracking controller by T. Lee et al. that publishes
   motor speed commands to follow desired trajectories.
@@ -130,6 +130,9 @@ For quick copy, an example one‑line BibTeX is:
   [Kaggle](https://www.kaggle.com/datasets/jessicali9530/celeba-dataset) and [MMLAB,
   CUHK](http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html). Original authors: Ziwei Liu, Ping Luo,
   Xiaogang Wang, and Xiaoou Tang.
+
+- **Animal Image Dataset (90 Different Animals)**: Downloaded from
+  [Kaggle](https://www.kaggle.com/datasets/iamsouravbanerjee/animal-image-dataset-90-different-animals/).
 
 - **Van Gogh Starry Night**: Downloaded from
   [Pixabay](https://pixabay.com/illustrations/starry-night-vincent-van-gough-1093721/). Artist:
