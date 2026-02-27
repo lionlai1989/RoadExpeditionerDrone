@@ -84,7 +84,7 @@ src/
     source /opt/ros/humble/setup.bash \
     && colcon build --base-paths src --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     && source install/setup.bash \
-    && ros2 launch red_bringup simulation.launch.py world_path:=src/red_bringup/worlds/single_layer_maze.world world_name:=single_layer_maze_world
+    && ros2 launch red_bringup simulation.launch.py world_path:=src/red_bringup/worlds/animal/single_layer_maze.world world_name:=single_layer_maze_world
     ```
 
 ---
