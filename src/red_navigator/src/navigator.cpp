@@ -10,6 +10,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/create_timer.hpp>
+#include <rclcpp/executors/multi_threaded_executor.hpp>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
@@ -240,21 +241,34 @@ class Navigator : public rclcpp::Node {
         this->declare_parameter("hover_height", 1.5);
         this->hover_height_ = this->get_parameter("hover_height").as_double();
 
+        // Mutually Exclusive Callback Group prevents its callbacks from being executed in parallel
+        // Reentrant Callback Group allows the executor to schedule and execute the group’s
+        // callbacks in any way it sees fit, without restrictions
+        // Callbacks belonging to different callback groups (of any type) can always be executed
+        // parallel to each other
+        this->control_cb_group_ =
+            this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+        this->io_cb_group_ = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+
+        rclcpp::SubscriptionOptions sub_options;
+        sub_options.callback_group = this->io_cb_group_;
+
         rclcpp::QoS map_qos(rclcpp::KeepLast(1));
         map_qos.reliable();
         map_qos.transient_local();
         map_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
-            "map", map_qos, std::bind(&Navigator::map_callback, this, std::placeholders::_1));
+            "map", map_qos, std::bind(&Navigator::map_callback, this, std::placeholders::_1),
+            sub_options);
 
         rclcpp::QoS pose_qos(rclcpp::KeepLast(1));
         pose_qos.best_effort();
         pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
             "localization_pose", pose_qos,
-            std::bind(&Navigator::pose_callback, this, std::placeholders::_1));
+            std::bind(&Navigator::pose_callback, this, std::placeholders::_1), sub_options);
 
         this->odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
             "odometry", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort(),
-            std::bind(&Navigator::odom_callback, this, std::placeholders::_1));
+            std::bind(&Navigator::odom_callback, this, std::placeholders::_1), sub_options);
 
         this->desired_odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>(
             "desired_odometry", rclcpp::QoS(rclcpp::KeepLast(10)).best_effort());
@@ -262,16 +276,20 @@ class Navigator : public rclcpp::Node {
             "visual_path", rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
 
         this->navi_state_timer_ = rclcpp::create_timer(
-            this, this->get_clock(), 200ms, std::bind(&Navigator::state_machine_step, this));
+            this, this->get_clock(), 200ms, std::bind(&Navigator::state_machine_step, this),
+            this->control_cb_group_);
 
         this->explorer_timer_ = rclcpp::create_timer(this, this->get_clock(), 5s,
-                                                     std::bind(&Navigator::explorer_step, this));
+                                                     std::bind(&Navigator::explorer_step, this),
+                                                     this->control_cb_group_);
 
         tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+        // TransformListener subscribes to /tf and /tf_static and fills tf_buffer_.
+        // Keep tf_listener_ alive so lookupTransform/transform calls can resolve data.
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-        plan_client_ =
-            rclcpp_action::create_client<ComputePathToPose>(this, "compute_path_to_pose");
+        plan_client_ = rclcpp_action::create_client<ComputePathToPose>(this, "compute_path_to_pose",
+                                                                       this->io_cb_group_);
     }
 
   private:
@@ -375,8 +393,9 @@ class Navigator : public rclcpp::Node {
         goal_map.point.z = 0.0;
 
         geometry_msgs::msg::PointStamped goal_odom;
+        // Get latest transform from map to odom. Throw if transform is not available.
         const auto map_to_odom = this->tf_buffer_->lookupTransform(
-            this->odom_frame_id_, this->map_frame_id_, rclcpp::Time(0), tf2::durationFromSec(0.2));
+            this->odom_frame_id_, this->map_frame_id_, rclcpp::Time(0));
         tf2::doTransform(goal_map, goal_odom, map_to_odom);
 
         goal_x_odom = goal_odom.point.x;
@@ -418,9 +437,10 @@ class Navigator : public rclcpp::Node {
         start_odom.header = odom.header;
         start_odom.pose = odom.pose.pose;
 
-        // start_map's yaw can be better chosen.
-        geometry_msgs::msg::PoseStamped start_map =
-            this->tf_buffer_->transform(start_odom, this->map_frame_id_, tf2::durationFromSec(0.2));
+        const auto odom_to_map_for_start = this->tf_buffer_->lookupTransform(
+            this->map_frame_id_, start_odom.header.frame_id, rclcpp::Time(0));
+        geometry_msgs::msg::PoseStamped start_map;
+        tf2::doTransform(start_odom, start_map, odom_to_map_for_start);
 
         geometry_msgs::msg::PoseStamped goal_map;
         goal_map.header.frame_id = this->map_frame_id_;
@@ -435,10 +455,9 @@ class Navigator : public rclcpp::Node {
                                       : quat_to_yaw(start_map.pose.orientation);
         goal_map.pose.orientation = yaw_to_quat(target_yaw);
 
-        if (!this->plan_client_->wait_for_action_server(
-                std::chrono::duration<double>(plan_timeout_sec_))) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                 "Nav2 planner action not available.");
+        // blocking call
+        if (!this->plan_client_->wait_for_action_server(std::chrono::duration<double>(1.0))) {
+            RCLCPP_WARN(this->get_logger(), "Nav2 planner action not available.");
             return;
         }
 
@@ -452,13 +471,11 @@ class Navigator : public rclcpp::Node {
         send_goal_options.result_callback =
             [this](const ComputePathToPoseGoalHandle::WrappedResult &result) {
                 if (result.code != rclcpp_action::ResultCode::SUCCEEDED || !result.result) {
-                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                         "Planner action failed.");
+                    RCLCPP_WARN(this->get_logger(), "Planner action failed.");
                     return;
                 }
                 if (result.result->path.poses.empty()) {
-                    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                                         "Planner returned empty path.");
+                    RCLCPP_WARN(this->get_logger(), "Planner returned empty path.");
                     return;
                 }
 
@@ -485,6 +502,7 @@ class Navigator : public rclcpp::Node {
                             this->trajectory_planner_.sample_count(), path.poses.size());
             };
 
+        // non-blocking call
         this->plan_client_->async_send_goal(goal_msg, send_goal_options);
     }
 
@@ -499,8 +517,22 @@ class Navigator : public rclcpp::Node {
         current_odom.header = odom.header;
         current_odom.pose = odom.pose.pose;
 
-        geometry_msgs::msg::PoseStamped current_map = this->tf_buffer_->transform(
-            current_odom, this->map_frame_id_, tf2::durationFromSec(0.2));
+        // Use the latest map-odom transform for control continuity instead of exact odom stamp.
+        // Keep one snapshot and derive its inverse so pose and velocity conversions stay
+        // consistent.
+        const geometry_msgs::msg::TransformStamped map_to_odom = this->tf_buffer_->lookupTransform(
+            this->odom_frame_id_, this->map_frame_id_, rclcpp::Time(0));
+        tf2::Transform map_to_odom_tf;
+        tf2::fromMsg(map_to_odom.transform, map_to_odom_tf);
+
+        geometry_msgs::msg::TransformStamped odom_to_map;
+        odom_to_map.header.stamp = map_to_odom.header.stamp;
+        odom_to_map.header.frame_id = this->map_frame_id_;
+        odom_to_map.child_frame_id = this->odom_frame_id_;
+        odom_to_map.transform = tf2::toMsg(map_to_odom_tf.inverse());
+
+        geometry_msgs::msg::PoseStamped current_map;
+        tf2::doTransform(current_odom, current_map, odom_to_map);
 
         geometry_msgs::msg::PoseStamped target_map;
         geometry_msgs::msg::Twist trajectory_twist_map;
@@ -518,12 +550,8 @@ class Navigator : public rclcpp::Node {
         target_map.header.frame_id = this->map_frame_id_;
         target_map.header.stamp = current_map.header.stamp;
 
-        const auto map_to_odom =
-            this->tf_buffer_->lookupTransform(this->odom_frame_id_, this->map_frame_id_,
-                                              current_map.header.stamp, tf2::durationFromSec(0.2));
-
-        geometry_msgs::msg::PoseStamped target_odom = this->tf_buffer_->transform(
-            target_map, this->odom_frame_id_, tf2::durationFromSec(0.2));
+        geometry_msgs::msg::PoseStamped target_odom;
+        tf2::doTransform(target_map, target_odom, map_to_odom);
 
         tf2::Quaternion q_map_to_odom;
         tf2::fromMsg(map_to_odom.transform.rotation, q_map_to_odom);
@@ -595,9 +623,8 @@ class Navigator : public rclcpp::Node {
 
         // Resolve odom -> map at the same sample time so we do not mix time slices.
         // This keeps the anchor consistent with the odometry sample that triggered SPINONCE/LOITER.
-        const auto odom_to_map =
-            this->tf_buffer_->lookupTransform(this->map_frame_id_, this->odom_frame_id_,
-                                              current_odom.header.stamp, tf2::durationFromSec(0.2));
+        const auto odom_to_map = this->tf_buffer_->lookupTransform(
+            this->map_frame_id_, this->odom_frame_id_, rclcpp::Time(0));
         geometry_msgs::msg::PointStamped hold_map;
         tf2::doTransform(hold_odom, hold_map, odom_to_map);
 
@@ -620,9 +647,8 @@ class Navigator : public rclcpp::Node {
         hold_map.point.z = this->takeoff_pose_.position.z;
 
         // Resolve map -> odom at the same control timestamp to avoid stale/extrapolated transforms.
-        const auto map_to_odom =
-            this->tf_buffer_->lookupTransform(this->odom_frame_id_, this->map_frame_id_,
-                                              current_odom.header.stamp, tf2::durationFromSec(0.2));
+        const auto map_to_odom = this->tf_buffer_->lookupTransform(
+            this->odom_frame_id_, this->map_frame_id_, rclcpp::Time(0));
         geometry_msgs::msg::PointStamped hold_odom;
         tf2::doTransform(hold_map, hold_odom, map_to_odom);
 
@@ -800,6 +826,8 @@ class Navigator : public rclcpp::Node {
 
     rclcpp::TimerBase::SharedPtr navi_state_timer_;
     rclcpp::TimerBase::SharedPtr explorer_timer_;
+    rclcpp::CallbackGroup::SharedPtr control_cb_group_;
+    rclcpp::CallbackGroup::SharedPtr io_cb_group_;
 
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -813,7 +841,6 @@ class Navigator : public rclcpp::Node {
     bool trajectory_ready_{false};
 
     std::string planner_id_{"GridBased"}; // must match planner_plugins in nav2_params.yaml
-    double plan_timeout_sec_{2.0};
 
     std::mutex odom_mutex_;
     std::optional<nav_msgs::msg::Odometry> latest_estimated_odom_;
@@ -858,7 +885,12 @@ class Navigator : public rclcpp::Node {
 
 int main(int argc, char **argv) {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<Navigator>());
+    auto navigator = std::make_shared<Navigator>();
+    // Reason why 2 threads are used here. Hint: control_cb_group_ is mutually exclusive and
+    // io_cb_group_ is reentrant.
+    rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 2);
+    executor.add_node(navigator);
+    executor.spin();
     rclcpp::shutdown();
     return 0;
 }
