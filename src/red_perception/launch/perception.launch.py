@@ -1,7 +1,8 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -108,6 +109,9 @@ def generate_launch_description():
     # Input: RGB, Depth, Odom
     # Output: Map
     rtabmap_db_path = PythonExpression(["'/tmp/rtabmap_' + '", drone_id, "' + '.db'"])
+    rtabmap_params_file = PathJoinSubstitution(
+        [FindPackageShare("red_perception"), "config", "rtabmap_params.yaml"]
+    )
     rtabmap_launch = Node(
         # On ROS 2 Humble, `rtabmap_ros` is often a metapackage with no libexec.
         # The `rtabmap` node executable is provided by `rtabmap_slam`.
@@ -116,6 +120,7 @@ def generate_launch_description():
         name="rtabmap",
         namespace=drone_id,
         parameters=[
+            rtabmap_params_file,
             {
                 "frame_id": PythonExpression(["'", drone_id, "' + '/base_link'"]),
                 "odom_frame_id": PythonExpression(["'", drone_id, "' + '/odom'"]),
@@ -130,31 +135,6 @@ def generate_launch_description():
                 "sync_queue_size": 3,  # Small to favor the latest RGB-D/odom data.
                 "wait_for_transform": 0.5,
                 "database_path": rtabmap_db_path,
-                # RTAB-Map parameters
-                "Rtabmap/LoopThr": "0.2",
-                "Rtabmap/LoopRatio": "0.2",
-                "RGBD/AngularUpdate": "0.01",
-                "RGBD/LinearUpdate": "0.01",
-                "RGBD/OptimizeFromGraphEnd": "false",
-                "RGBD/LoopCovLimited": "false",
-                "RGBD/OptimizeMaxError": "2.0",
-                "Vis/CorNNDR": "0.7",
-                "Vis/MinInliers": "30",
-                "Vis/MinInliersDistribution": "0.0",
-                "Vis/MaxFeatures": "1000",
-                "Kp/NndrRatio": "0.7",
-                "Kp/BadSignRatio": "0.5",
-                "Kp/MaxFeatures": "600",
-                "Grid/MaxGroundHeight": "0.0",  # disable
-                "Grid/MaxObstacleHeight": "0.0",  # disable
-                "Grid/RangeMax": "5.0",  # Limit grid map range
-                "Grid/NoiseFilteringMinNeighbors": "5",  # Reduce noise
-                "Grid/RayTracing": "true",  # Ray tracing to clear free space
-                "Grid/FromDepth": "true",  # Create 2D grid from depth camera
-                "Mem/DepthCompressionFormat": ".png",
-                "Mem/SaveDepth16Format": "false",  # float32 depth
-                "Mem/BadSignaturesIgnored": "false",
-                "Optimizer/GravityConstraints": "true",
             }
         ],
         remappings=[
