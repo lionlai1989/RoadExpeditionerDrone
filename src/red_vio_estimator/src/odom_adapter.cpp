@@ -35,14 +35,20 @@ class OdomAdapter : public rclcpp::Node {
             openvins_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
                 "odomimu", rclcpp::QoS(50),
                 std::bind(&OdomAdapter::handle_openvins_odom, this, std::placeholders::_1));
+            groundtruth_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
+                "groundtruth_odometry", rclcpp::QoS(50),
+                std::bind(&OdomAdapter::handle_groundtruth_odom, this, std::placeholders::_1));
+        } else if (vio_source_ == "synthetic") {
+            synthetic_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
+                "groundtruth_odometry", rclcpp::QoS(50),
+                std::bind(&OdomAdapter::handle_synthetic_odom, this, std::placeholders::_1));
+        } else if (vio_source_ == "groundtruth") {
+            groundtruth_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
+                "groundtruth_odometry", rclcpp::QoS(50),
+                std::bind(&OdomAdapter::handle_groundtruth_odom, this, std::placeholders::_1));
+        } else {
+            throw std::runtime_error("Invalid vio_source: " + vio_source_);
         }
-
-        // For some unknown reason, groundtruth_odometry must be subscribed and published even in
-        // openvins mode so that openvins can initialize successfully. That is, odomimu callback
-        // will be triggered.
-        groundtruth_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
-            "groundtruth_odometry", rclcpp::QoS(50),
-            std::bind(&OdomAdapter::handle_groundtruth_odom, this, std::placeholders::_1));
 
         odom_publisher_ = create_publisher<nav_msgs::msg::Odometry>("odometry", rclcpp::QoS(50));
     }
@@ -132,6 +138,22 @@ class OdomAdapter : public rclcpp::Node {
         tf_broadcaster_->sendTransform(transform);
     }
 
+    void handle_synthetic_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
+        const tf2::Transform world_to_base = pose_to_transform(msg->pose.pose);
+        if (!groundtruth_origin_initialized_) {
+            world_to_base0_inverse_ = world_to_base.inverse();
+            groundtruth_origin_initialized_ = true;
+        }
+
+        const tf2::Transform groundtruth_odom_to_base = world_to_base0_inverse_ * world_to_base;
+
+        nav_msgs::msg::Odometry synthetic_msg = *msg;
+        const tf2::Transform synthetic_odom_to_base =
+            make_synthetic_odom_to_base(groundtruth_odom_to_base, rclcpp::Time(msg->header.stamp));
+        add_synthetic_velocity_noise(synthetic_msg);
+        publish_odom_and_tf(synthetic_msg, synthetic_odom_to_base);
+    }
+
     void handle_groundtruth_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
         if (openvins_origin_initialized_) {
             return;
@@ -145,15 +167,7 @@ class OdomAdapter : public rclcpp::Node {
 
         const tf2::Transform groundtruth_odom_to_base = world_to_base0_inverse_ * world_to_base;
 
-        if (vio_source_ == "synthetic") {
-            nav_msgs::msg::Odometry synthetic_msg = *msg;
-            const tf2::Transform synthetic_odom_to_base = make_synthetic_odom_to_base(
-                groundtruth_odom_to_base, rclcpp::Time(msg->header.stamp));
-            add_synthetic_velocity_noise(synthetic_msg);
-            publish_odom_and_tf(synthetic_msg, synthetic_odom_to_base);
-        } else {
-            publish_odom_and_tf(*msg, groundtruth_odom_to_base);
-        }
+        publish_odom_and_tf(*msg, groundtruth_odom_to_base);
     }
 
     double sample_gaussian(const double stddev) {
@@ -258,6 +272,7 @@ class OdomAdapter : public rclcpp::Node {
     geometry_msgs::msg::Pose prev_openvins_pose_;
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr groundtruth_subscription_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr synthetic_subscription_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr openvins_subscription_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher_;
     std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
