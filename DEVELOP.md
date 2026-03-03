@@ -1,5 +1,133 @@
 # Container-based Development
 
+## Source of Odometry
+
+In the `src/red_vio_estimator/src/odom_adapter.cpp` module, odometry data is bridged from the Gazebo
+simulation environment or computed by an estimator. The system architecture defines three primary
+modes of operation for odometry controlled by `vio_source`: `groundtruth`, `synthetic`, and
+`openvins`.
+
+### 1. Groundtruth mode (`vio_source:=groundtruth`)
+
+Groundtruth mode uses the simulator pose directly (bridged from Gazebo) as the odometry source. This
+groundtruth odometry is expressed in the Gazebo `world` frame and serves as a perfect, noise-free
+representation of the drone's position and orientation.
+
+It is effectively "perfect odometry":
+
+- No sensor noise
+- No bias drift
+- No scale error
+- No tracking loss
+
+Current state: The entire system, including the geometric controller and trajectory planner,
+functions perfectly in this mode.
+
+This mode is excellent for early bring-up to:
+
+- Verify TF wiring and topic remapping
+- Validate controller signs/axes and planner integration
+- Confirm that failures are not caused by state-estimation uncertainty
+
+Limitation: While it proves the fundamental logic of our control algorithms, it creates a false
+sense of security. Real-world sensors are never perfect, and success in this mode does not guarantee
+the system is robust or practically viable. A system that only works with unrealistic clean odometry
+may still fail in realistic VIO conditions.
+
+### 2. OpenVINS mode (`vio_source:=openvins`)
+
+OpenVINS mode is designed to simulate a real-world deployment where the drone relies entirely on
+Visual-Inertial Odometry (VIO). It starts with a brief initialization using groundtruth data but
+rapidly transitions to compute its odometry using the OpenVINS algorithm (visual-inertial estimation
+from camera + IMU). Unlike groundtruth mode, this is an estimator output with real failure modes:
+
+- Short-term noise and jitter
+- Slowly accumulating drift
+- Sensitivity to texture, motion profile, and timing
+- Startup/transient behavior during initialization
+
+Key Characteristic: A critical design requirement for OpenVINS mode is that it **must completely
+break away from the Gazebo `world` frame**. Once initialized, OpenVINS establishes its own internal
+global reference frame based on its initial visual-inertial state, independent of the simulation's
+absolute coordinate system. This accurately reflects how a drone operates in the wild without
+external positioning systems (like GNSS, GPS, or motion capture).
+
+Current State: The system can fail when operating in OpenVINS mode due to the complexities
+introduced.
+
+### 3. Synthetic mode (`vio_source:=synthetic`)
+
+To bridge the gap between perfection (Groundtruth Mode) and total failure (OpenVINS Mode), we have
+an intermediate testing ground. Directly debugging the system while it relies on OpenVINS is
+exceptionally difficult because:
+
+1. OpenVINS introduces complex, interconnected errors (noise, biases, drift).
+2. It's hard to pinpoint whether a failure is caused by a fundamental flaw in the control logic or
+   simply the controller's inability to handle a specific type or magnitude of VIO error.
+
+`groundtruth` is too clean and `openvins` can fail for many coupled reasons at once. `synthetic`
+mode mimics the characteristics of OpenVINS odometry systematically. We achieve this by taking the
+perfect Gazebo groundtruth odometry and intentionally degrading it before feeding it to the rest of
+the system.
+
+#### Requirements for Synthetic Odometry
+
+To accurately represent real-world VIO, the synthetic odometry module relies on three main
+corruptions:
+- **Noises**: High-frequency, random fluctuations mimicking sensor noise (e.g., Gaussian noise on
+  position and velocity).
+- **Biases**: Constant or slowly varying offsets in the measurements.
+- **Random Walks**: The accumulation of error over time, causing the estimated position to gradually
+  diverge from the true position, even when the drone is stationary.
+
+This allows us to:
+
+- Isolate downstream module robustness (controller, navigator, planner) in isolation without
+  estimator complexity.
+- Reproduce failures deterministically by using fixed parameter settings.
+- Sweep error magnitude gradually to find exact breakpoints.
+- Build a staged validation pipeline before enabling full OpenVINS.
+
+#### Design and Workflow
+
+To fulfill these requirements, the following design is implemented in
+`src/red_vio_estimator/src/odom_adapter.cpp` and should be used as a workflow when operating
+`vio_source:=synthetic`:
+
+1. **Independent Global Frame (Anchor to local odometry frame)**
+   - Similar to `openvins` mode, when initialized, `synthetic` odometry totally breaks away from the Gazebo `world` frame.
+   - Use first received groundtruth pose as synthetic origin $(0, 0, 0)$ with identity rotation for the synthetic odometry frame.
+   - Publish all later synthetic poses in local `odom` coordinates (relative to this local origin), not absolute Gazebo `world`.
+
+2. **Generate synthetic odometry from local groundtruth**
+   - Start from `groundtruth_local`.
+   - Apply configurable corruption terms (ROS configurable standard deviations):
+     - `noise_pos_stddev` (m): High-frequency noise added directly to position.
+     - `noise_vel_stddev` (m/s): High-frequency noise added directly to linear velocity.
+     - `random_walk_pos_stddev` (m/s): Standard deviation for position drift per step.
+     - `random_walk_yaw_stddev` (rad/s): Standard deviation for yaw drift per step.
+   - Conceptually:
+     `synthetic = groundtruth_local + noise + bias + random_walk`
+
+3. **Publish at the same rate as groundtruth callback**
+   - Generate and publish synthetic odometry reactively inside the `groundtruth_odometry` callback.
+   - This guarantees it publishes at the exact same rate as the simulation groundtruth, keeping timestamps aligned.
+
+4. **Run a progressive robustness campaign**
+   - Phase A: zero corruption (should match groundtruth behavior)
+   - Phase B: add small noise only
+   - Phase C: increase noise and add drift
+   - Phase D: stress levels near expected OpenVINS error envelope
+
+5. **Compare and diagnose**
+   - Monitor `/groundtruth_odometry` vs `/odometry` divergence.
+   - Track when mission metrics degrade (tracking error, oscillation, path quality, recovery failures).
+   - Tune downstream modules based on measured sensitivity.
+
+6. **Promote to OpenVINS**
+   - Only switch to full `openvins` testing after synthetic stress tests are stable.
+   - This reduces OpenVINS debugging to estimator-specific issues instead of mixed-system failures.
+
 ## Coordinate Frames
 
 Following standard ROS conventions (REP-105), the operational TF chain is

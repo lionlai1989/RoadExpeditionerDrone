@@ -11,6 +11,7 @@
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <random>
 #include <string>
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -27,13 +28,13 @@ class OdomAdapter : public rclcpp::Node {
         odom_frame_id_ = declare_parameter<std::string>("odom_frame_id");
         base_frame_id_ = declare_parameter<std::string>("base_frame_id");
         vio_source_ = declare_parameter<std::string>("vio_source");
+        assert((vio_source_ == "groundtruth") || (vio_source_ == "synthetic") ||
+               (vio_source_ == "openvins"));
 
         if (vio_source_ == "openvins") {
             openvins_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
                 "odomimu", rclcpp::QoS(50),
                 std::bind(&OdomAdapter::handle_openvins_odom, this, std::placeholders::_1));
-            RCLCPP_INFO(this->get_logger(),
-                        "OdomAdapter source: openvins (subscribing to odomimu)");
         }
 
         // For some unknown reason, groundtruth_odometry must be subscribed and published even in
@@ -42,8 +43,6 @@ class OdomAdapter : public rclcpp::Node {
         groundtruth_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
             "groundtruth_odometry", rclcpp::QoS(50),
             std::bind(&OdomAdapter::handle_groundtruth_odom, this, std::placeholders::_1));
-        RCLCPP_INFO(this->get_logger(),
-                    "OdomAdapter source: groundtruth (subscribing to groundtruth_odometry)");
 
         odom_publisher_ = create_publisher<nav_msgs::msg::Odometry>("odometry", rclcpp::QoS(50));
     }
@@ -107,12 +106,10 @@ class OdomAdapter : public rclcpp::Node {
         return openvins_valid_msg_count_ >= kOpenvinsMinStableMsgCount;
     }
 
-    void publish_odom_and_tf(const nav_msgs::msg::Odometry &source_msg,
-                             const tf2::Transform &odom_to_base) {
+    void publish_odom_and_tf(nav_msgs::msg::Odometry odom_msg, const tf2::Transform &odom_to_base) {
         const tf2::Vector3 p = odom_to_base.getOrigin();
         const tf2::Quaternion q = odom_to_base.getRotation();
 
-        nav_msgs::msg::Odometry odom_msg = source_msg;
         odom_msg.header.frame_id = odom_frame_id_;
         odom_msg.child_frame_id = base_frame_id_;
         odom_msg.pose.pose.position.x = p.x();
@@ -146,8 +143,70 @@ class OdomAdapter : public rclcpp::Node {
             groundtruth_origin_initialized_ = true;
         }
 
-        const tf2::Transform odom_to_base = world_to_base0_inverse_ * world_to_base;
-        publish_odom_and_tf(*msg, odom_to_base);
+        const tf2::Transform groundtruth_odom_to_base = world_to_base0_inverse_ * world_to_base;
+
+        if (vio_source_ == "synthetic") {
+            nav_msgs::msg::Odometry synthetic_msg = *msg;
+            const tf2::Transform synthetic_odom_to_base = make_synthetic_odom_to_base(
+                groundtruth_odom_to_base, rclcpp::Time(msg->header.stamp));
+            add_synthetic_velocity_noise(synthetic_msg);
+            publish_odom_and_tf(synthetic_msg, synthetic_odom_to_base);
+        } else {
+            publish_odom_and_tf(*msg, groundtruth_odom_to_base);
+        }
+    }
+
+    double sample_gaussian(const double stddev) {
+        assert(stddev >= 0.0);
+        if (stddev == 0.0) {
+            return 0.0;
+        }
+        return stddev * normal_dist_(random_engine_);
+    }
+
+    double synthetic_dt_sec(const rclcpp::Time &stamp) {
+        if (!synthetic_prev_stamp_initialized_) {
+            synthetic_prev_stamp_ = stamp;
+            synthetic_prev_stamp_initialized_ = true;
+            return 0.0;
+        }
+
+        const double dt_sec = (stamp - synthetic_prev_stamp_).seconds();
+        synthetic_prev_stamp_ = stamp;
+        assert(is_finite(dt_sec));
+        assert(dt_sec >= 0.0);
+        return dt_sec;
+    }
+
+    tf2::Transform make_synthetic_odom_to_base(const tf2::Transform &groundtruth_odom_to_base,
+                                               const rclcpp::Time &stamp) {
+        const double dt_sec = synthetic_dt_sec(stamp);
+
+        synthetic_position_random_walk_ +=
+            tf2::Vector3(sample_gaussian(random_walk_pos_stddev_ * dt_sec),
+                         sample_gaussian(random_walk_pos_stddev_ * dt_sec),
+                         sample_gaussian(random_walk_pos_stddev_ * dt_sec));
+        synthetic_yaw_random_walk_ += sample_gaussian(random_walk_yaw_stddev_ * dt_sec);
+
+        const tf2::Vector3 groundtruth_position = groundtruth_odom_to_base.getOrigin();
+        const tf2::Vector3 synthetic_position =
+            groundtruth_position + synthetic_position_random_walk_ +
+            tf2::Vector3(sample_gaussian(noise_pos_stddev_), sample_gaussian(noise_pos_stddev_),
+                         sample_gaussian(noise_pos_stddev_));
+
+        tf2::Quaternion synthetic_yaw_drift;
+        synthetic_yaw_drift.setRPY(0.0, 0.0, synthetic_yaw_random_walk_);
+        tf2::Quaternion synthetic_orientation =
+            synthetic_yaw_drift * groundtruth_odom_to_base.getRotation();
+        synthetic_orientation.normalize();
+
+        return tf2::Transform(synthetic_orientation, synthetic_position);
+    }
+
+    void add_synthetic_velocity_noise(nav_msgs::msg::Odometry &odom_msg) {
+        odom_msg.twist.twist.linear.x += sample_gaussian(noise_vel_stddev_);
+        odom_msg.twist.twist.linear.y += sample_gaussian(noise_vel_stddev_);
+        odom_msg.twist.twist.linear.z += sample_gaussian(noise_vel_stddev_);
     }
 
     void handle_openvins_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -177,6 +236,21 @@ class OdomAdapter : public rclcpp::Node {
 
     bool groundtruth_origin_initialized_ = false;
     tf2::Transform world_to_base0_inverse_;
+
+    tf2::Vector3 synthetic_position_random_walk_ = tf2::Vector3(0.0, 0.0, 0.0);
+    double synthetic_yaw_random_walk_ = 0.0;
+    bool synthetic_prev_stamp_initialized_ = false;
+    rclcpp::Time synthetic_prev_stamp_;
+    std::mt19937 random_engine_{std::random_device{}()};
+    std::normal_distribution<double> normal_dist_{0.0, 1.0};
+    // Derived from x500_base IMU noise in src/red_gz_plugin/models/x500_base/model.sdf.
+    // accel stddev RMS = sqrt((0.00637^2 + 0.00637^2 + 0.00686^2) / 3) [m/s^2]
+    // gyro stddev = 0.0008726646 [rad/s], imu_dt = 1 / 250 [s]
+    double noise_pos_stddev_ = 1.0459864626e-7;
+    double noise_vel_stddev_ = 2.6149661566e-5;
+    double random_walk_pos_stddev_ = 2.6149661566e-5;
+    double random_walk_yaw_stddev_ = 8.726646e-4;
+
     bool openvins_origin_initialized_ = false;
     tf2::Transform odom_to_openvins_global_;
 
