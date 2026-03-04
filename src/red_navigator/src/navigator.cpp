@@ -369,6 +369,7 @@ class Navigator : public rclcpp::Node {
                 std::lock_guard<std::mutex> lock(this->goal_mutex_);
                 this->goal_x_map_ = new_goal.x_map;
                 this->goal_y_map_ = new_goal.y_map;
+                this->goal_z_map_ = this->hold_z_map_;
             }
             RCLCPP_INFO(this->get_logger(), "New frontier goal: x=%.2f y=%.2f", new_goal.x_map,
                         new_goal.y_map);
@@ -380,7 +381,8 @@ class Navigator : public rclcpp::Node {
     }
 
     void transform_goal_to_odom(const red::navigator::FrontierGoal &goal_map_frame,
-                                double &goal_x_odom, double &goal_y_odom) {
+                                const double goal_z_map_frame, double &goal_x_odom,
+                                double &goal_y_odom, double &goal_z_odom) {
         // for debugging. do not delete assert
         assert(this->map_frame_id_ == "drone_1/map");
         assert(this->odom_frame_id_ == "drone_1/odom");
@@ -390,7 +392,7 @@ class Navigator : public rclcpp::Node {
         goal_map.header.stamp = rclcpp::Time(0);
         goal_map.point.x = goal_map_frame.x_map;
         goal_map.point.y = goal_map_frame.y_map;
-        goal_map.point.z = 0.0;
+        goal_map.point.z = goal_z_map_frame;
 
         geometry_msgs::msg::PointStamped goal_odom;
         // Get latest transform from map to odom. Throw if transform is not available.
@@ -400,6 +402,7 @@ class Navigator : public rclcpp::Node {
 
         goal_x_odom = goal_odom.point.x;
         goal_y_odom = goal_odom.point.y;
+        goal_z_odom = goal_odom.point.z;
     }
 
     void reset_path() {
@@ -423,10 +426,12 @@ class Navigator : public rclcpp::Node {
 
         nav_msgs::msg::Odometry odom;
         red::navigator::FrontierGoal goal{};
+        double goal_z_map = 0.0;
         {
             std::lock_guard<std::mutex> lock(this->goal_mutex_);
             goal.x_map = this->goal_x_map_;
             goal.y_map = this->goal_y_map_;
+            goal_z_map = this->goal_z_map_;
         }
         {
             std::lock_guard<std::mutex> lock(this->odom_mutex_);
@@ -447,7 +452,7 @@ class Navigator : public rclcpp::Node {
         goal_map.header.stamp = start_map.header.stamp;
         goal_map.pose.position.x = goal.x_map;
         goal_map.pose.position.y = goal.y_map;
-        goal_map.pose.position.z = 0.0;
+        goal_map.pose.position.z = goal_z_map;
         const double dx = goal_map.pose.position.x - start_map.pose.position.x;
         const double dy = goal_map.pose.position.y - start_map.pose.position.y;
         const double target_yaw = (std::hypot(dx, dy) > 1e-3)
@@ -545,6 +550,12 @@ class Navigator : public rclcpp::Node {
         if (!sampled) {
             target_map = current_map;
         }
+        // Nav2 planning is 2D. Anchor z explicitly in map so map->odom applies to a
+        // well-defined 3D target instead of relying on planner-returned z.
+        {
+            std::lock_guard<std::mutex> lock(this->goal_mutex_);
+            target_map.pose.position.z = this->goal_z_map_;
+        }
         // Nav2 path poses can be stale; align the target pose timestamp to the current map time
         // so TF does not extrapolate into the past.
         target_map.header.frame_id = this->map_frame_id_;
@@ -574,7 +585,6 @@ class Navigator : public rclcpp::Node {
 
         geometry_msgs::msg::Pose desired_pose{};
         desired_pose.position = target_odom.pose.position;
-        desired_pose.position.z = this->takeoff_pose_.position.z;
         desired_pose.orientation = yaw_to_quat(target_yaw);
 
         geometry_msgs::msg::Twist desired_twist{};
@@ -621,32 +631,33 @@ class Navigator : public rclcpp::Node {
         hold_odom.point.y = current_odom.pose.pose.position.y;
         hold_odom.point.z = current_odom.pose.pose.position.z;
 
-        // Resolve odom -> map at the same sample time so we do not mix time slices.
-        // This keeps the anchor consistent with the odometry sample that triggered SPINONCE/LOITER.
+        // Resolve odom -> map using the latest available TF (Time(0)).
+        // This intentionally prioritizes control continuity over strict timestamp matching.
         const auto odom_to_map = this->tf_buffer_->lookupTransform(
             this->map_frame_id_, this->odom_frame_id_, rclcpp::Time(0));
         geometry_msgs::msg::PointStamped hold_map;
         tf2::doTransform(hold_odom, hold_map, odom_to_map);
 
-        // Persist only map XY as the global hold anchor.
-        // Z hold is intentionally commanded from takeoff height to keep altitude behavior
-        // unchanged.
+        // Persist map XYZ as the global hold anchor.
         this->hold_x_map_ = hold_map.point.x;
         this->hold_y_map_ = hold_map.point.y;
+        this->hold_z_map_ = hold_map.point.z;
     }
 
     void fill_desired_hold_pose_from_map(const nav_msgs::msg::Odometry &current_odom,
                                          geometry_msgs::msg::Pose &desired_pose) {
 
         // Reconstruct hold anchor in map frame.
+        // Keep odom stamp for traceability; transform resolution below uses latest TF by design.
         geometry_msgs::msg::PointStamped hold_map;
         hold_map.header.frame_id = this->map_frame_id_;
         hold_map.header.stamp = current_odom.header.stamp;
         hold_map.point.x = this->hold_x_map_;
         hold_map.point.y = this->hold_y_map_;
-        hold_map.point.z = this->takeoff_pose_.position.z;
+        hold_map.point.z = this->hold_z_map_;
 
-        // Resolve map -> odom at the same control timestamp to avoid stale/extrapolated transforms.
+        // Resolve map -> odom using the latest available TF (Time(0)).
+        // This keeps hold commands aligned with the current map/odom correction state.
         const auto map_to_odom = this->tf_buffer_->lookupTransform(
             this->odom_frame_id_, this->map_frame_id_, rclcpp::Time(0));
         geometry_msgs::msg::PointStamped hold_odom;
@@ -656,7 +667,7 @@ class Navigator : public rclcpp::Node {
         // Orientation is owned by the caller (spin yaw in SPINONCE, hold yaw in LOITER).
         desired_pose.position.x = hold_odom.point.x;
         desired_pose.position.y = hold_odom.point.y;
-        desired_pose.position.z = this->takeoff_pose_.position.z;
+        desired_pose.position.z = hold_odom.point.z;
     }
 
     void state_machine_step() {
@@ -695,16 +706,22 @@ class Navigator : public rclcpp::Node {
         // Only check if the goal is reached when the path and trajectory are ready and in
         // NAVIGATING state.
         if (this->path_ready_ && this->trajectory_ready_ && this->state_ == NavState::NAVIGATING) {
-            std::lock_guard<std::mutex> lock(this->goal_mutex_);
             double goal_x_odom = 0.0;
             double goal_y_odom = 0.0;
+            double goal_z_odom = 0.0;
             red::navigator::FrontierGoal goal;
-            goal.x_map = this->goal_x_map_;
-            goal.y_map = this->goal_y_map_;
-            this->transform_goal_to_odom(goal, goal_x_odom, goal_y_odom);
+            double goal_z_map = 0.0;
+            {
+                std::lock_guard<std::mutex> lock(this->goal_mutex_);
+                goal.x_map = this->goal_x_map_;
+                goal.y_map = this->goal_y_map_;
+                goal_z_map = this->goal_z_map_;
+            }
+            this->transform_goal_to_odom(goal, goal_z_map, goal_x_odom, goal_y_odom, goal_z_odom);
             const double dx = goal_x_odom - current_odom->pose.pose.position.x;
             const double dy = goal_y_odom - current_odom->pose.pose.position.y;
-            if (std::hypot(dx, dy) < this->goal_reached_radius_) {
+            const double dz = goal_z_odom - current_odom->pose.pose.position.z;
+            if (std::sqrt(dx * dx + dy * dy + dz * dz) < this->goal_reached_radius_) {
                 RCLCPP_INFO(this->get_logger(), "Goal reached. Resetting path.");
                 this->reset_path();
             }
@@ -716,8 +733,8 @@ class Navigator : public rclcpp::Node {
         geometry_msgs::msg::Twist desired_twist{};
         switch (this->state_) {
         case NavState::LANDED: {
-            // During takeoff, is there map information? If yes, use the map information to set the
-            // takeoff xyz position. If no, use the odom position as the takeoff position.
+            // In LANDED, it switches to TAKINGOFF immediately. There SHALL not be map information
+            // available. Thus, raw odometry (without transform) is used to set takeoff pose.
             this->takeoff_pose_.position.x = current_odom->pose.pose.position.x;
             this->takeoff_pose_.position.y = current_odom->pose.pose.position.y;
             this->takeoff_pose_.position.z =
@@ -733,9 +750,9 @@ class Navigator : public rclcpp::Node {
             const float dx = current_odom->pose.pose.position.x - this->takeoff_pose_.position.x;
             const float dy = current_odom->pose.pose.position.y - this->takeoff_pose_.position.y;
             const float dz = current_odom->pose.pose.position.z - this->takeoff_pose_.position.z;
-            // TODO: Think carefully about the takeoff tolerance and map
-            if (std::sqrt(dx * dx + dy * dy + dz * dz) < this->takeoff_tolerance_ &&
-                this->map_ready_) {
+            // During TAKINGOFF, map must be ready before going to the next state.
+            if (this->map_ready_ &&
+                (std::sqrt(dx * dx + dy * dy + dz * dz) < this->takeoff_tolerance_)) {
                 this->lock_hold_position_in_map(*current_odom);
                 this->hold_yaw_ = quat_to_yaw(current_odom->pose.pose.orientation);
                 this->start_spin(this->hold_yaw_);
@@ -791,8 +808,7 @@ class Navigator : public rclcpp::Node {
         }
         } // switch this->state_
 
-        // When state changed, do not publish desired odometry because desired odometry is
-        // invalid.
+        // When state changed, do not publish desired odometry. This is done by design.
         if (prev_state != this->state_) {
             RCLCPP_INFO(this->get_logger(), "State changed: %d -> %d", static_cast<int>(prev_state),
                         static_cast<int>(this->state_));
@@ -864,10 +880,12 @@ class Navigator : public rclcpp::Node {
     // Goal position in the map frame.
     double goal_x_map_{0.0};
     double goal_y_map_{0.0};
+    double goal_z_map_{0.0};
     double goal_reached_radius_{0.1};
 
     double hold_x_map_{0.0};
     double hold_y_map_{0.0};
+    double hold_z_map_{0.0};
     double hold_yaw_{0.0};
     double spin_start_yaw_{0.0};
     double spin_last_yaw_{0.0};

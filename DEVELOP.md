@@ -1,5 +1,29 @@
 # Container-based Development
 
+## Coordinate Frames
+
+Following standard ROS conventions (REP-105), the operational TF chain is
+`map -> odom -> base_link -> sensor frames`.
+
+- **Gazebo `world`**: The absolute global frame used by the simulator for model poses and ground
+  truth. It is not part of the ROS TF chain unless explicitly published.
+
+- **OpenVINS `global`**: An estimator-internal reference frame, independent of Gazebo `world`.
+  During initialization, it is gravity-aligned (global +Z opposite gravity), while yaw and position
+  gauge freedoms are set by initialization constraints.
+
+- **`odom`**: A local, continuous frame used for control and short-horizon tracking. In this
+  project, `odom_adapter` publishes `odom -> base_link`, initializes `odom` to identity at startup,
+  bootstraps from ground truth, and then (in OpenVINS mode) hands off to OpenVINS with a frozen
+  alignment transform to preserve continuity.
+
+- **`map`**: A globally consistent SLAM frame produced by RTAB-Map. RTAB-Map publishes `map ->
+  odom`; this transform may jump during loop closure to correct long-term drift.
+
+- **`base_link`**: The drone body frame (REP-103: x forward, y left, z up). Sensor frames (IMU,
+  cameras) are static children of `base_link` directly or via intermediate frames (e.g.,
+  `camera_link`).
+
 ## Source of Odometry
 
 In the `src/red_vio_estimator/src/odom_adapter.cpp` module, odometry data is bridged from the Gazebo
@@ -128,29 +152,33 @@ To fulfill these requirements, the following design is implemented in
    - Only switch to full `openvins` testing after synthetic stress tests are stable.
    - This reduces OpenVINS debugging to estimator-specific issues instead of mixed-system failures.
 
-## Coordinate Frames
+## OpenVINS Initialization
 
-Following standard ROS conventions (REP-105), the operational TF chain is
-`map -> odom -> base_link -> sensor frames`.
+When operating in `openvins` mode, OpenVINS faces a classic "chicken-and-egg" initialization
+problem: the drone controller needs odometry to initiate movement, but OpenVINS needs physical
+movement to triangulate visual depth and start publishing odometry.
 
-- **Gazebo `world`**: The absolute global frame used by the simulator for model poses and ground
-  truth. It is not part of the ROS TF chain unless explicitly published.
+This dependency is resolved through the following dynamics:
 
-- **OpenVINS `global`**: An estimator-internal reference frame, independent of Gazebo `world`.
-  During initialization, it is gravity-aligned (global +Z opposite gravity), while yaw and position
-  gauge freedoms are set by initialization constraints.
+1. Stationary IMU Initialization (ZUPT): With `try_zupt: true` configured, the estimator
+   initializes the IMU's roll, pitch, and velocity (to precisely zero) while the drone remains
+   perfectly stationary.
 
-- **`odom`**: A local, continuous frame used for control and short-horizon tracking. In this
-  project, `odom_adapter` publishes `odom -> base_link`, initializes `odom` to identity at startup,
-  bootstraps from ground truth, and then (in OpenVINS mode) hands off to OpenVINS with a frozen
-  alignment transform to preserve continuity.
+2. Visual Parallax Requirement: Despite ZUPT, OpenVINS suppresses the `odomimu` topic until it
+   detects visual motion. It needs a minimal spatial baseline, a feature shift of at least **2.0
+   pixels** (set by `init_max_disparity`), to perform its initial depth triangulation. Because the
+   IMU state is already primed by ZUPT, this tiny translation is sufficient for full state
+   initialization, avoiding the need for large-scale or multi-axis continuous motion.
 
-- **`map`**: A globally consistent SLAM frame produced by RTAB-Map. RTAB-Map publishes `map ->
-  odom`; this transform may jump during loop closure to correct long-term drift.
+3. Groundtruth Bootstrap: To break the motion deadlock, `odom_adapter.cpp` uses
+   `groundtruth_odometry` to temporarily bootstrap the initial takeoff trajectory.
 
-- **`base_link`**: The drone body frame (REP-103: x forward, y left, z up). Sensor frames (IMU,
-  cameras) are static children of `base_link` directly or via intermediate frames (e.g.,
-  `camera_link`).
+4. Initialization Indicator: OpenVINS explicitly delays publishing the `odomimu` state topic
+   until its state estimator completes initialization and transitions into stable tracking. The
+   arrival of the first `odomimu` message acts as the definitive indicator of successful
+   initialization. Upon this event, `odom_adapter.cpp` registers initialization
+   (`openvins_origin_initialized_ = true`) and seamlessly hands off odometry from the groundtruth
+   bootstrap to the live OpenVINS stream.
 
 ## Useful Commands
 
