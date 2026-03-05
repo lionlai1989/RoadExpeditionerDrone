@@ -180,6 +180,72 @@ This dependency is resolved through the following dynamics:
    (`openvins_origin_initialized_ = true`) and seamlessly hands off odometry from the groundtruth
    bootstrap to the live OpenVINS stream.
 
+## IMU Sensor Model
+
+### Gazebo SDF Configuration
+
+The IMU sensor (`imu_sensor`) in `src/red_gz_plugin/models/x500_base/model.sdf` is configured with
+**zero Gaussian noise** on both angular velocity and linear acceleration:
+
+```xml
+<noise type="gaussian">
+  <mean>0.0</mean>
+  <stddev>0.0</stddev>
+</noise>
+```
+
+This makes the simulated IMU a mathematically perfect sensor — every reading is exact.  There is
+also no bias and no random walk in Gazebo's IMU plugin; bias drift simply does not exist in
+simulation.  The IMU publishes at **250 Hz**.
+
+### Why a Perfect IMU Still Needs Noise Parameters in OpenVINS
+
+Despite the perfect sensor, OpenVINS requires **non-zero** values for all four IMU noise parameters
+in `src/red_vio_estimator/config/openvins/kalibr_imu_chain.yaml`.  These parameters are **not**
+measurements of the physical sensor — they are **EKF tuning knobs** that control the relative
+authority of IMU propagation vs. visual measurements.
+
+#### The underlying math
+
+OpenVINS propagates the EKF state covariance P between camera frames via:
+
+```
+Ṗ = F·P + P·Fᵀ + G·Q·Gᵀ
+```
+
+where Q is the process-noise matrix constructed from the four parameters below.  A larger Q causes
+P to grow faster between visual updates.  The Kalman gain at the next update is:
+
+```
+K = P·Hᵀ · (H·P·Hᵀ + R)⁻¹
+```
+
+If Q = 0 (matching the true zero-noise sensor), P stops growing between frames and K → 0.  Every
+visual measurement is then silently ignored and the estimator runs as pure IMU dead-reckoning —
+which drifts unboundedly because double-integrating acceleration is numerically unstable.
+
+#### Chosen values (intentionally inflated relative to the true sensor)
+
+| Parameter | Value | Rationale |
+|---|---|---|
+| `accelerometer_noise_density` | `1e-6` m/s²/√Hz | Keeps accel propagation uncertainty non-zero so vision has nonzero Kalman gain |
+| `accelerometer_random_walk`   | `1e-7` m/s²/√s  | Prevents accel bias covariance from collapsing; filter stays open to visual bias corrections |
+| `gyroscope_noise_density`     | `1e-7` rad/s/√Hz | Same as above for orientation propagation |
+| `gyroscope_random_walk`       | `1e-8` rad/s/√s  | Same as above for gyro bias state |
+
+The values are kept very small (orders of magnitude below real MEMS IMUs) so the filter still
+highly trusts the IMU — but they are non-zero so the Kalman gain from visual updates remains
+meaningful.
+
+#### Random walk: why it is needed even without physical bias drift
+
+The random walk parameters set the **process noise on the bias states** (b_a and b_g) in the EKF.
+With `1e-10` (the previous values), the bias covariance collapsed to near-zero within the first few
+IMU steps — the filter became infinitely confident in the bias estimate and could not revise it even
+when visual residuals demanded a correction.  The current values (`1e-7` / `1e-8`) keep the bias
+covariance large enough that visual updates can influence the bias estimate, without making the
+filter so uncertain about biases that it chases noise.
+
 ## Useful Commands
 
 - Visualize nodes, topics, services
