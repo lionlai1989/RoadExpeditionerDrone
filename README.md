@@ -95,6 +95,8 @@ Materials used during development and recommended reading.
 ### ROS 2 Humble and Gazebo Harmonic
 - [ROS 2 Humble Documentation](https://docs.ros.org/en/humble/)
 - [Gazebo Harmonic Documentation](https://gazebosim.org/docs/harmonic/getstarted/)
+- [Henki ROS 2 Best Practices](https://github.com/henki-robotics/henki_ros2_best_practices)
+- [Robotics & ROS 2 Essentials](https://github.com/henki-robotics/robotics_essentials_ros2)
 
 ### RTAB-Map
 - RTAB-Map as an Open-Source Lidar and Visual SLAM Library for Large-Scale and Long-Term Online
