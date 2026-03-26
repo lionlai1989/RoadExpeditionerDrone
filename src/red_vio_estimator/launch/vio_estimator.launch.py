@@ -63,25 +63,45 @@ def generate_launch_description():
             "' + '/link/base_link/sensor/imu_sensor/imu@sensor_msgs/msg/Imu[gz.msgs.IMU'",
         ]
     )
-    bridge_rgb_image = PythonExpression(
+    bridge_stereo_left_image = PythonExpression(
         [
             "'/world/' + '",
             world_name,
             "' + '/model/' + '",
             drone_id,
-            "' + '/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image[gz.msgs.Image'",
+            "' + '/link/camera_link/sensor/StereoLeft/image@sensor_msgs/msg/Image[gz.msgs.Image'",
         ]
     )
-    bridge_rgb_camera_info = PythonExpression(
+    bridge_stereo_left_camera_info = PythonExpression(
         [
             "'/world/' + '",
             world_name,
             "' + '/model/' + '",
             drone_id,
-            "' + '/link/camera_link/sensor/IMX214/camera_info"
+            "' + '/link/camera_link/sensor/StereoLeft/camera_info"
             "@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'",
         ]
     )
+    bridge_stereo_right_image = PythonExpression(
+        [
+            "'/world/' + '",
+            world_name,
+            "' + '/model/' + '",
+            drone_id,
+            "' + '/link/camera_link/sensor/StereoRight/image@sensor_msgs/msg/Image[gz.msgs.Image'",
+        ]
+    )
+    bridge_stereo_right_camera_info = PythonExpression(
+        [
+            "'/world/' + '",
+            world_name,
+            "' + '/model/' + '",
+            drone_id,
+            "' + '/link/camera_link/sensor/StereoRight/camera_info"
+            "@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'",
+        ]
+    )
+
     remap_imu = PythonExpression(
         [
             "'/world/' + '",
@@ -91,22 +111,40 @@ def generate_launch_description():
             "' + '/link/base_link/sensor/imu_sensor/imu:=imu'",
         ]
     )
-    remap_rgb_image = PythonExpression(
+    remap_stereo_left_image = PythonExpression(
         [
             "'/world/' + '",
             world_name,
             "' + '/model/' + '",
             drone_id,
-            "' + '/link/camera_link/sensor/IMX214/image:=rgb/image'",
+            "' + '/link/camera_link/sensor/StereoLeft/image:=stereo_left/image'",
         ]
     )
-    remap_rgb_camera_info = PythonExpression(
+    remap_stereo_left_camera_info = PythonExpression(
         [
             "'/world/' + '",
             world_name,
             "' + '/model/' + '",
             drone_id,
-            "' + '/link/camera_link/sensor/IMX214/camera_info:=rgb/camera_info'",
+            "' + '/link/camera_link/sensor/StereoLeft/camera_info:=stereo_left/camera_info'",
+        ]
+    )
+    remap_stereo_right_image = PythonExpression(
+        [
+            "'/world/' + '",
+            world_name,
+            "' + '/model/' + '",
+            drone_id,
+            "' + '/link/camera_link/sensor/StereoRight/image:=stereo_right/image'",
+        ]
+    )
+    remap_stereo_right_camera_info = PythonExpression(
+        [
+            "'/world/' + '",
+            world_name,
+            "' + '/model/' + '",
+            drone_id,
+            "' + '/link/camera_link/sensor/StereoRight/camera_info:=stereo_right/camera_info'",
         ]
     )
     # Keep IMU and RGB in separate bridge processes: IMU is high-rate and
@@ -127,20 +165,26 @@ def generate_launch_description():
         ],
         output="screen",
     )
-    rgb_bridge = Node(
+    stereo_bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
-        name="rgb_bridge",
+        name="stereo_bridge",
         namespace=drone_id,
         parameters=[{"use_sim_time": True}],
         arguments=[
-            bridge_rgb_image,
-            bridge_rgb_camera_info,
+            bridge_stereo_left_image,
+            bridge_stereo_left_camera_info,
+            bridge_stereo_right_image,
+            bridge_stereo_right_camera_info,
             "--ros-args",
             "-r",
-            remap_rgb_image,
+            remap_stereo_left_image,
             "-r",
-            remap_rgb_camera_info,
+            remap_stereo_left_camera_info,
+            "-r",
+            remap_stereo_right_image,
+            "-r",
+            remap_stereo_right_camera_info,
         ],
         output="screen",
     )
@@ -190,7 +234,8 @@ def generate_launch_description():
         ],
         remappings=[
             ("/imu0", "imu"),
-            ("/cam0/image_raw", "rgb/image"),  # OpenVINS converts rgb to mono8 internally.
+            ("/cam0/image_raw", "stereo_left/image"),
+            ("/cam1/image_raw", "stereo_right/image"),
         ],
         output="screen",
     )
@@ -202,7 +247,7 @@ def generate_launch_description():
             world_name_arg,
             ros_gz_bridge,
             imu_bridge,
-            rgb_bridge,
+            stereo_bridge,
             odom_adapter,
             openvins_node,
         ]

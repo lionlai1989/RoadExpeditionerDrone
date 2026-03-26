@@ -15,6 +15,61 @@ def generate_launch_description():
     drone_id = LaunchConfiguration("drone_id")
     world_name = LaunchConfiguration("world_name")
 
+    bridge_rgb_image = PythonExpression(
+        [
+            "'/world/' + '",
+            world_name,
+            "' + '/model/' + '",
+            drone_id,
+            "' + '/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image[gz.msgs.Image'",
+        ]
+    )
+    bridge_rgb_camera_info = PythonExpression(
+        [
+            "'/world/' + '",
+            world_name,
+            "' + '/model/' + '",
+            drone_id,
+            "' + '/link/camera_link/sensor/IMX214/camera_info"
+            "@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'",
+        ]
+    )
+    remap_rgb_image = PythonExpression(
+        [
+            "'/world/' + '",
+            world_name,
+            "' + '/model/' + '",
+            drone_id,
+            "' + '/link/camera_link/sensor/IMX214/image:=rgb/image'",
+        ]
+    )
+    remap_rgb_camera_info = PythonExpression(
+        [
+            "'/world/' + '",
+            world_name,
+            "' + '/model/' + '",
+            drone_id,
+            "' + '/link/camera_link/sensor/IMX214/camera_info:=rgb/camera_info'",
+        ]
+    )
+    rgb_bridge = Node(
+        package="ros_gz_bridge",
+        executable="parameter_bridge",
+        name="rgb_bridge",
+        namespace=drone_id,
+        parameters=[{"use_sim_time": True}],
+        arguments=[
+            bridge_rgb_image,
+            bridge_rgb_camera_info,
+            "--ros-args",
+            "-r",
+            remap_rgb_image,
+            "-r",
+            remap_rgb_camera_info,
+        ],
+        output="screen",
+    )
+
     bridge_depth_image = PythonExpression(
         [
             "'/world/' + '",
@@ -135,7 +190,7 @@ def generate_launch_description():
                 "sync_queue_size": 3,  # Small to favor the latest RGB-D/odom data.
                 "wait_for_transform": 0.5,
                 "database_path": rtabmap_db_path,
-            }
+            },
         ],
         remappings=[
             ("tf", "/tf"),
@@ -150,6 +205,7 @@ def generate_launch_description():
         [
             drone_id_arg,
             world_name_arg,
+            rgb_bridge,
             depth_bridge,
             static_tf_base_link_to_imu_sensor,
             rtabmap_launch,

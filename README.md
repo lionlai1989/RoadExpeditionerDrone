@@ -61,8 +61,8 @@ src/
 - **`red_perception`**: Handles RGB-D sensor streams and runs RTAB-Map for 3D mapping and loop
   closure.
 
-- **`red_vio_estimator`**: Wraps OpenVINS to compute high-frequency visual-inertial odometry for
-  local continuous state estimation. (work in progress)
+- **`red_vio_estimator`**: Wraps OpenVINS to compute high-frequency visual-inertial odometry using
+  stereo RGB cameras for local continuous state estimation. (work in progress)
 
 ---
 

@@ -4,8 +4,8 @@ verbosity: "INFO" # ALL, DEBUG, INFO, WARNING, ERROR, SILENT
 
 use_fej: true
 integration: "rk4"
-use_stereo: false
-max_cameras: 1
+use_stereo: true
+max_cameras: 2
 
 calib_cam_extrinsics: false
 calib_cam_intrinsics: false
@@ -35,7 +35,7 @@ zupt_only_at_beginning: true
 init_window_time: 2.0
 init_imu_thresh: 0.2
 init_max_disparity: 2.0
-init_max_features: 40
+init_max_features: 80
 
 init_dyn_use: false
 init_dyn_mle_opt_calib: false
@@ -69,7 +69,7 @@ grid_x: 8
 grid_y: 6
 min_px_dist: 12
 knn_ratio: 0.70
-track_frequency: 60.0
+track_frequency: 30.0
 downsample_cameras: false
 num_opencv_threads: 4
 histogram_method: "HISTOGRAM"
