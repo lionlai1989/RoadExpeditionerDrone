@@ -14,7 +14,7 @@ The project covers the **"full stack"** of an autonomous drone, including:
   loop closure using RGB-D data to correct for odometry drift.
 
 - **Visual Inertial Odometry (OpenVINS)**: Estimates local continuous odometry at high frequency
-  using camera and IMU data. (work in progress)
+  using stereo RGB cameras and IMU data.
 
 - **Map Exploration (Frontier Detection)**: Identifies boundaries between known free space and
   unknown areas to guide autonomous exploration.
@@ -62,7 +62,7 @@ src/
   closure.
 
 - **`red_vio_estimator`**: Wraps OpenVINS to compute high-frequency visual-inertial odometry using
-  stereo RGB cameras for local continuous state estimation. (work in progress)
+  stereo RGB cameras for local continuous state estimation.
 
 ---
 
