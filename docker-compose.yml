@@ -12,6 +12,14 @@ services:
         USER_ID: ${HOST_UID:-1000}
         GROUP_ID: ${HOST_GID:-1000}
         USER_NAME: lion
+    security_opt:
+      # Removes the default Docker syscall filter so debuggers (gdb, strace) and GPU/DRM drivers can
+      # issue privileged or uncommon syscalls (ptrace, perf_event_open, etc.) that the default
+      # seccomp profile would silently block.
+      - seccomp=unconfined
+      # Disables the kernel AppArmor MAC profile so Gazebo, GPU drivers, and DRM device paths are
+      # not blocked by path/capability access rules imposed at the kernel level.
+      - apparmor=unconfined
 
     environment:
       - TERM=xterm-256color
