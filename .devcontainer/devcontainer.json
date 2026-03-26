@@ -14,7 +14,8 @@
         "ms-azuretools.vscode-docker",
         "stkb.rewrap",
         "charliermarsh.ruff",
-        "anthropic.claude-code"
+        "anthropic.claude-code",
+        "openai.chatgpt"
       ],
       "settings": {
         "terminal.integrated.shell.linux": "/bin/bash",
