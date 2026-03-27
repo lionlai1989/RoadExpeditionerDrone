@@ -6,10 +6,29 @@ imu0:
     - [0.0, 1.0, 0.0, 0.0]
     - [0.0, 0.0, 1.0, 0.0]
     - [0.0, 0.0, 0.0, 1.0]
-  accelerometer_noise_density: 4.1900e-4
-  accelerometer_random_walk: 6.0000e-5
-  gyroscope_noise_density: 5.5200e-5
-  gyroscope_random_walk: 5.0000e-6
+  # IMU spec source:
+  #   src/red_gz_plugin/models/x500_base/model.sdf
+  #   sensor: <sensor name="imu_sensor" type="imu">, update_rate = 250 Hz
+  #   gyro stddev (x,y,z) = 0.0008726646 rad/s
+  #   accel stddev (x,y) = 0.00637 m/s^2, (z) = 0.00686 m/s^2
+  #
+  # Conversion (discrete stddev -> continuous noise density):
+  #   noise_density = stddev / sqrt(update_rate)
+  #
+  # Gyro:
+  #   0.0008726646 / sqrt(250) = 5.5192e-5 rad/s/sqrt(Hz)
+  #
+  # Accel (OpenVINS accepts a single scalar, not per-axis):
+  #   x,y: 0.00637 / sqrt(250) = 4.0287e-4 m/s^2/sqrt(Hz)
+  #   z  : 0.00686 / sqrt(250) = 4.3386e-4 m/s^2/sqrt(Hz)
+  #   use worst-case axis -> 4.3386e-4
+  accelerometer_noise_density: 4.3386e-4
+  # Random-walk terms here are for IMU bias-state drift (b_a, b_g), not for sample white noise.
+  # White measurement noise is already modeled above via *_noise_density (non-zero).
+  # We set random walk to 0 because this Gazebo IMU model does not include a drifting bias process.
+  accelerometer_random_walk: 0.0
+  gyroscope_noise_density: 5.5192e-5
+  gyroscope_random_walk: 0.0
   rostopic: /imu0
   time_offset: 0.0
   update_rate: 250.0

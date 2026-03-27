@@ -13,7 +13,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     drone_id_arg = DeclareLaunchArgument("drone_id", description="Drone namespace")
     vio_source_arg = DeclareLaunchArgument(
-        "vio_source", default_value="groundtruth", description="groundtruth, synthetic or openvins"
+        "vio_source", default_value="openvins", description="groundtruth, synthetic or openvins"
     )
     world_name_arg = DeclareLaunchArgument(
         "world_name", description="Gazebo world name `<world name='...'>` defined in the world SDF."

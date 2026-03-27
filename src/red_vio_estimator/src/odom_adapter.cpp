@@ -3,15 +3,19 @@
  *   - Topic: `/<drone_id>/odometry`
  *   - TF: `/<drone_id>/odom -> /<drone_id>/base_link`
  *
- * In `openvins` mode, it bootstraps from Gazebo groundtruth odometry. After odomimu callback is
- * triggered, it transitions to OpenVINS odometry immediately.
+ * In `openvins` mode, it bootstraps from groundtruth until the first OpenVINS odomimu message
+ * arrives. At transition, it freezes a one-time `odom_to_ov_global_` transform so the odom frame
+ * stays continuous (no pose/yaw jump). All subsequent poses are:
+ *   T_odom_base = odom_to_ov_global_ * T_ovglobal_imu
  */
 
 #include <cassert>
 #include <cmath>
 #include <functional>
+#include <iomanip>
 #include <memory>
 #include <random>
+#include <sstream>
 #include <string>
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -61,14 +65,6 @@ class OdomAdapter : public rclcpp::Node {
                is_finite(pose.position.z) && is_finite(pose.orientation.x) &&
                is_finite(pose.orientation.y) && is_finite(pose.orientation.z) &&
                is_finite(pose.orientation.w);
-    }
-
-    static double position_step_m(const geometry_msgs::msg::Pose &a,
-                                  const geometry_msgs::msg::Pose &b) {
-        const double dx = a.position.x - b.position.x;
-        const double dy = a.position.y - b.position.y;
-        const double dz = a.position.z - b.position.z;
-        return std::sqrt(dx * dx + dy * dy + dz * dz);
     }
 
     static tf2::Transform pose_to_transform(const geometry_msgs::msg::Pose &pose) {
@@ -122,7 +118,7 @@ class OdomAdapter : public rclcpp::Node {
     }
 
     void handle_groundtruth_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
-        if (openvins_origin_initialized_) {
+        if (openvins_active_) {
             return;
         }
 
@@ -132,22 +128,27 @@ class OdomAdapter : public rclcpp::Node {
             groundtruth_origin_initialized_ = true;
         }
 
-        const tf2::Transform groundtruth_odom_to_base = world_to_base0_inverse_ * world_to_base;
+        latest_groundtruth_odom_to_base_ = world_to_base0_inverse_ * world_to_base;
 
-        publish_odom_and_tf(*msg, groundtruth_odom_to_base);
+        publish_odom_and_tf(*msg, latest_groundtruth_odom_to_base_);
     }
 
     void handle_openvins_odom(const nav_msgs::msg::Odometry::SharedPtr msg) {
         assert(is_pose_finite(msg->pose.pose));
 
         const tf2::Transform ov_global_to_imu = pose_to_transform(msg->pose.pose);
-        if (!openvins_origin_initialized_) {
-            openvins_origin_initialized_ = true;
+        if (!openvins_active_) {
+            assert(groundtruth_origin_initialized_);
+            // Freeze a one-time transform: odom = groundtruth_odom_to_base * (ov_global_to_imu)^-1
+            // so that T_odom_base is continuous across the switch.
+            odom_to_ov_global_ = latest_groundtruth_odom_to_base_ * ov_global_to_imu.inverse();
+            openvins_active_ = true;
             RCLCPP_INFO(get_logger(), "\x1b[1;36mSwitched odometry source to OpenVINS\x1b[0m");
         }
 
-        const tf2::Transform odom_to_base = ov_global_to_imu;
-        publish_odom_and_tf(*msg, odom_to_base);
+        nav_msgs::msg::Odometry odom_msg = *msg;
+        const tf2::Transform odom_to_base = odom_to_ov_global_ * ov_global_to_imu;
+        publish_odom_and_tf(odom_msg, odom_to_base);
     }
 
     std::string odom_frame_id_;
@@ -157,11 +158,10 @@ class OdomAdapter : public rclcpp::Node {
 
     bool groundtruth_origin_initialized_ = false;
     tf2::Transform world_to_base0_inverse_;
+    tf2::Transform latest_groundtruth_odom_to_base_;
 
-    bool openvins_origin_initialized_ = false;
-    tf2::Transform odom_to_openvins_global_;
-
-    geometry_msgs::msg::Pose prev_openvins_pose_;
+    bool openvins_active_ = false;
+    tf2::Transform odom_to_ov_global_;
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr groundtruth_subscription_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr synthetic_subscription_;

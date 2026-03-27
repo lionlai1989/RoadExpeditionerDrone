@@ -63,7 +63,7 @@ may still fail in realistic VIO conditions.
 OpenVINS mode is designed to simulate a real-world deployment where the drone relies entirely on
 Visual-Inertial Odometry (VIO). It starts with a brief initialization using groundtruth data but
 rapidly transitions to compute its odometry using the OpenVINS algorithm (visual-inertial estimation
-from camera + IMU). Unlike groundtruth mode, this is an estimator output with real failure modes:
+from stereo RGB cameras + IMU). Unlike groundtruth mode, this is an estimator output with real failure modes:
 
 - Short-term noise and jitter
 - Slowly accumulating drift
@@ -78,6 +78,254 @@ external positioning systems (like GNSS, GPS, or motion capture).
 
 Current State: The system can fail when operating in OpenVINS mode due to the complexities
 introduced.
+
+#### Stereo RGB Images for OpenVINS
+
+OpenVINS uses a dedicated stereo RGB pair: `StereoLeft` and `StereoRight`. RTAB-Map continues using
+`IMX214` for RGB and `StereoOV7251` for depth unchanged. This separation keeps VIO and RGB-D SLAM
+independent:
+
+- OpenVINS consumes `StereoLeft` / `StereoRight` + IMU
+- RTAB-Map consumes `IMX214` + `StereoOV7251` + odometry
+
+`IMX214` is not reused as `cam0` for OpenVINS because it is physically offset from the stereo pair.
+Relative to `camera_link`, `IMX214` sits at `y = -0.03`, while the OpenVINS stereo pair is centered
+symmetrically about `camera_link` y=0 with a **15 cm baseline**.
+
+#### Geometry
+
+Baseline B = 15 cm (0.15 m), symmetric about `camera_link` y=0.
+
+Positions relative to `camera_link` (x and z same as `IMX214`):
+
+| Camera | x | y | z |
+|---|---|---|---|
+| `StereoLeft` (cam0) | 0.01233 | +0.075 | 0.01878 |
+| `StereoRight` (cam1) | 0.01233 | -0.075 | 0.01878 |
+
+Positions relative to `base_link` (`camera_link` offset = `(0.12, 0.03, 0.484)`):
+
+| Camera | x | y | z |
+|---|---|---|---|
+| `StereoLeft` (cam0) | 0.13233 | +0.105 | 0.50278 |
+| `StereoRight` (cam1) | 0.13233 | -0.045 | 0.50278 |
+
+The stereo sensors are defined in `src/red_gz_plugin/models/OakD-Lite/model.sdf` as two
+`type="camera"` sensors under `<link name="camera_link">`. Their intrinsics match `IMX214`:
+
+```xml
+<sensor name="StereoLeft" type="camera">
+  <pose>0.01233 0.075 .01878 0 0 0</pose>
+  <camera>
+    <horizontal_fov>1.274</horizontal_fov>
+    <image>
+      <width>640</width>
+      <height>480</height>
+    </image>
+    <clip>
+      <near>0.1</near>
+      <far>100</far>
+    </clip>
+  </camera>
+  <always_on>1</always_on>
+  <update_rate>30</update_rate>
+  <visualize>true</visualize>
+</sensor>
+<sensor name="StereoRight" type="camera">
+  <pose>0.01233 -0.075 .01878 0 0 0</pose>
+  <camera>
+    <horizontal_fov>1.274</horizontal_fov>
+    <image>
+      <width>640</width>
+      <height>480</height>
+    </image>
+    <clip>
+      <near>0.1</near>
+      <far>100</far>
+    </clip>
+  </camera>
+  <always_on>1</always_on>
+  <update_rate>30</update_rate>
+  <visualize>true</visualize>
+</sensor>
+```
+
+#### TF Wiring
+
+In `src/red_bringup/launch/simulation.launch.py`, `create_static_tf(drone_id)` publishes static TFs
+for `StereoLeft` and `StereoRight`.
+
+The rotation is identical to `IMX214` and `StereoOV7251`:
+
+- body frame to ROS optical frame
+- yaw = `-90 deg`
+- pitch = `0`
+- roll = `-90 deg`
+
+Only Y translation differs between the two stereo cameras:
+
+```python
+Node(
+    package="tf2_ros",
+    executable="static_transform_publisher",
+    name="static_tf_base_link_to_StereoLeft",
+    namespace=drone_id,
+    output="screen",
+    arguments=[
+        "--x", "0.13233",
+        "--y", "0.105",
+        "--z", "0.50278",
+        "--yaw", "-1.5707",
+        "--pitch", "0",
+        "--roll", "-1.5707",
+        "--frame-id", f"{drone_id}/base_link",
+        "--child-frame-id", f"{drone_id}/camera_link/StereoLeft",
+    ],
+    parameters=[{"use_sim_time": True}],
+),
+Node(
+    package="tf2_ros",
+    executable="static_transform_publisher",
+    name="static_tf_base_link_to_StereoRight",
+    namespace=drone_id,
+    output="screen",
+    arguments=[
+        "--x", "0.13233",
+        "--y", "-0.045",
+        "--z", "0.50278",
+        "--yaw", "-1.5707",
+        "--pitch", "0",
+        "--roll", "-1.5707",
+        "--frame-id", f"{drone_id}/base_link",
+        "--child-frame-id", f"{drone_id}/camera_link/StereoRight",
+    ],
+    parameters=[{"use_sim_time": True}],
+),
+```
+
+#### ROS Topic Bridging and OpenVINS Input
+
+In `src/red_vio_estimator/launch/vio_estimator.launch.py`, the stereo images are bridged from Gazebo
+and remapped into namespaced ROS topics:
+
+- Gazebo `.../sensor/StereoLeft/image` -> ROS `stereo_left/image`
+- Gazebo `.../sensor/StereoLeft/camera_info` -> ROS `stereo_left/camera_info`
+- Gazebo `.../sensor/StereoRight/image` -> ROS `stereo_right/image`
+- Gazebo `.../sensor/StereoRight/camera_info` -> ROS `stereo_right/camera_info`
+
+The stereo cameras are kept in their own `stereo_bridge` process, separate from the `imu_bridge`.
+This reduces contention from image serialization and callbacks on the timing-critical IMU path.
+
+OpenVINS is then remapped to consume the stereo pair as:
+
+```python
+remappings=[
+    ("/imu0", "imu"),
+    ("/cam0/image_raw", "stereo_left/image"),
+    ("/cam1/image_raw", "stereo_right/image"),
+],
+```
+
+Therefore:
+
+- `cam0` = `StereoLeft`
+- `cam1` = `StereoRight`
+
+#### OpenVINS Calibration Configuration
+
+In `src/red_vio_estimator/config/openvins/kalibr_imucam_chain.yaml`, `cam0` and `cam1` are defined
+for the stereo pair. Both cameras use the same optical-to-body rotation:
+
+`R_CtoI = [[0, 0, 1], [-1, 0, 0], [0, -1, 0]]`
+
+Only `p_CinI.y` differs because of the stereo baseline:
+
+```yaml
+cam0:
+  T_imu_cam:
+    - [0.0,  0.0, 1.0,  0.13233]
+    - [-1.0, 0.0, 0.0,  0.105  ]
+    - [0.0, -1.0, 0.0,  0.50278]
+    - [0.0,  0.0, 0.0,  1.0    ]
+  cam_overlaps: [1]
+  camera_model: pinhole
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0]
+  distortion_model: radtan
+  intrinsics: [432.50, 432.50, 320.0, 240.0]
+  resolution: [640, 480]
+  rostopic: /cam0/image_raw
+
+cam1:
+  T_imu_cam:
+    - [0.0,  0.0, 1.0,  0.13233]
+    - [-1.0, 0.0, 0.0, -0.045  ]
+    - [0.0, -1.0, 0.0,  0.50278]
+    - [0.0,  0.0, 0.0,  1.0    ]
+  cam_overlaps: [0]
+  camera_model: pinhole
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0]
+  distortion_model: radtan
+  intrinsics: [432.50, 432.50, 320.0, 240.0]
+  resolution: [640, 480]
+  rostopic: /cam1/image_raw
+```
+
+Stereo mode is enabled in `src/red_vio_estimator/config/openvins/estimator_config.yaml`:
+
+```yaml
+use_stereo: true
+max_cameras: 2
+```
+
+#### What Does Not Change
+
+- `IMX214` remains the RGB source for RTAB-Map
+- `StereoOV7251` remains the depth source for RTAB-Map
+- `src/red_perception/launch/perception.launch.py` remains unchanged and continues to bridge only
+  `rgb/image` and `depth/image` for RTAB-Map
+- `src/red_perception/config/rtabmap_params.yaml` does not depend on the OpenVINS stereo pair
+
+#### Verification
+
+To confirm the stereo wiring is working correctly:
+
+1. Confirm Gazebo stereo topics exist:
+
+```bash
+gz topic -l | grep Stereo
+```
+
+Expected:
+
+- `.../sensor/StereoLeft/image`
+- `.../sensor/StereoRight/image`
+
+2. Confirm ROS stereo topics are bridged at about 30 Hz:
+
+```bash
+ros2 topic hz /drone_1/stereo_left/image
+ros2 topic hz /drone_1/stereo_right/image
+```
+
+3. Confirm static TFs are published:
+
+```bash
+ros2 run tf2_tools view_frames
+```
+
+Expected TF edges:
+
+- `drone_1/base_link -> drone_1/camera_link/StereoLeft`
+- `drone_1/base_link -> drone_1/camera_link/StereoRight`
+
+4. Confirm OpenVINS starts publishing odometry after initialization:
+
+```bash
+ros2 topic echo /drone_1/odomimu --once
+```
+
+The stereo images being present is necessary, but the real success criterion is that OpenVINS
+receives `cam0`, `cam1`, and IMU data consistently enough to initialize and publish `odomimu`.
 
 ### 3. Synthetic mode (`vio_source:=synthetic`)
 
@@ -340,6 +588,10 @@ rqt_graph
 /drone_1/rgb/camera_info
 /drone_1/rgb/image
 /drone_1/rtabmap/republish_node_data
+/drone_1/stereo_left/camera_info
+/drone_1/stereo_left/image
+/drone_1/stereo_right/camera_info
+/drone_1/stereo_right/image
 /drone_1/tag_detections
 /drone_1/trackhist
 /drone_1/trackhist/compressed
@@ -373,14 +625,17 @@ rqt_graph
 /drone_1/rgb_bridge
 /drone_1/rtabmap
 /drone_1/rviz2
+/drone_1/static_tf_base_link_to_StereoLeft
 /drone_1/static_tf_base_link_to_StereoOV7251
+/drone_1/static_tf_base_link_to_StereoRight
 /drone_1/static_tf_base_link_to_camera_link
 /drone_1/static_tf_base_link_to_imu_sensor
 /drone_1/static_tf_base_link_to_imx214
-/drone_1/transform_listener_impl_55e163ea3220
-/drone_1/transform_listener_impl_56a3497839a0
-/drone_1/transform_listener_impl_58208091ee00
-/drone_1/transform_listener_impl_650ded189030
+/drone_1/stereo_bridge
+/drone_1/transform_listener_impl_5a66908e0b50
+/drone_1/transform_listener_impl_6108ae8bebd0
+/drone_1/transform_listener_impl_62f1fec5f860
+/drone_1/transform_listener_impl_63705a4fb530
 /ros_gz_bridge_clock
 ```
 
@@ -421,9 +676,13 @@ average rate: 199.207
 /world/single_layer_maze_world/model/drone_1/link/base_link/sensor/navsat_sensor/navsat
 /world/single_layer_maze_world/model/drone_1/link/camera_link/sensor/IMX214/camera_info
 /world/single_layer_maze_world/model/drone_1/link/camera_link/sensor/IMX214/image
+/world/single_layer_maze_world/model/drone_1/link/camera_link/sensor/StereoLeft/camera_info
+/world/single_layer_maze_world/model/drone_1/link/camera_link/sensor/StereoLeft/image
 /world/single_layer_maze_world/model/drone_1/link/camera_link/sensor/StereoOV7251/camera_info
 /world/single_layer_maze_world/model/drone_1/link/camera_link/sensor/StereoOV7251/depth_image
 /world/single_layer_maze_world/model/drone_1/link/camera_link/sensor/StereoOV7251/depth_image/points
+/world/single_layer_maze_world/model/drone_1/link/camera_link/sensor/StereoRight/camera_info
+/world/single_layer_maze_world/model/drone_1/link/camera_link/sensor/StereoRight/image
 /world/single_layer_maze_world/pose/info
 /world/single_layer_maze_world/scene/deletion
 /world/single_layer_maze_world/scene/info
