@@ -10,6 +10,7 @@ from launch.actions import (
     RegisterEventHandler,
     TimerAction,
 )
+from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnShutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
@@ -214,6 +215,11 @@ def generate_launch_description():
         "world_name",
         description="Gazebo world name `<world name='...'>` defined in the world SDF.",
     )
+    gazebo_gui_arg = DeclareLaunchArgument(
+        "gazebo_gui",
+        default_value="true",
+        description="Whether to run Gazebo with GUI (true/false).",
+    )
 
     # Gazebo environment variables.
     gz_resource_paths = [
@@ -233,8 +239,7 @@ def generate_launch_description():
         "GZ_SIM_SYSTEM_PLUGIN_PATH": gz_system_plugin_path,
     }
 
-    # Always run Gazebo with GUI enabled.
-    gz_sim = ExecuteProcess(
+    gz_sim_gui = ExecuteProcess(
         cmd=[
             "gz",
             "sim",
@@ -244,6 +249,21 @@ def generate_launch_description():
         ],
         output="screen",
         additional_env=gz_additional_env,
+        condition=IfCondition(LaunchConfiguration("gazebo_gui")),
+    )
+    gz_sim_headless = ExecuteProcess(
+        cmd=[
+            "gz",
+            "sim",
+            "--verbose=1",
+            "-r",
+            "-s",
+            "--headless-rendering",
+            LaunchConfiguration("world_path"),
+        ],
+        output="screen",
+        additional_env=gz_additional_env,
+        condition=UnlessCondition(LaunchConfiguration("gazebo_gui")),
     )
 
     ros_gz_bridge_clock = Node(
@@ -276,12 +296,13 @@ def generate_launch_description():
             # Launch arguments
             world_path_arg,
             world_name_arg,
+            gazebo_gui_arg,
             # Pre-cleanup
             *create_cleanup_actions(),
             # (t=3.0) Start Gazebo. Assume pre-cleanup has been done.
             TimerAction(
                 period=3.0,
-                actions=[gz_sim],
+                actions=[gz_sim_gui, gz_sim_headless],
             ),
             # (t=6.0) Start ros_gz_bridge_clock.
             TimerAction(
