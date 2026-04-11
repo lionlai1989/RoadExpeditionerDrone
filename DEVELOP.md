@@ -44,19 +44,11 @@ It is effectively "perfect odometry":
 - No scale error
 - No tracking loss
 
-Current state: The entire system, including the geometric controller and trajectory planner,
-functions perfectly in this mode.
-
 This mode is excellent for early bring-up to:
 
 - Verify TF wiring and topic remapping
 - Validate controller signs/axes and planner integration
 - Confirm that failures are not caused by state-estimation uncertainty
-
-Limitation: While it proves the fundamental logic of our control algorithms, it creates a false
-sense of security. Real-world sensors are never perfect, and success in this mode does not guarantee
-the system is robust or practically viable. A system that only works with unrealistic clean odometry
-may still fail in realistic VIO conditions.
 
 ### 2. OpenVINS mode (`vio_source:=openvins`)
 
@@ -76,9 +68,6 @@ global reference frame based on its initial visual-inertial state, independent o
 absolute coordinate system. This accurately reflects how a drone operates in the wild without
 external positioning systems (like GNSS, GPS, or motion capture).
 
-Current State: The system can fail when operating in OpenVINS mode due to the complexities
-introduced.
-
 #### Stereo RGB Images for OpenVINS
 
 OpenVINS uses a dedicated stereo RGB pair: `StereoLeft` and `StereoRight`. RTAB-Map continues using
@@ -87,10 +76,6 @@ independent:
 
 - OpenVINS consumes `StereoLeft` / `StereoRight` + IMU
 - RTAB-Map consumes `IMX214` + `StereoOV7251` + odometry
-
-`IMX214` is not reused as `cam0` for OpenVINS because it is physically offset from the stereo pair.
-Relative to `camera_link`, `IMX214` sits at `y = -0.03`, while the OpenVINS stereo pair is centered
-symmetrically about `camera_link` y=0 with a **15 cm baseline**.
 
 #### Geometry
 
@@ -111,44 +96,7 @@ Positions relative to `base_link` (`camera_link` offset = `(0.12, 0.03, 0.484)`)
 | `StereoRight` (cam1) | 0.13233 | -0.045 | 0.50278 |
 
 The stereo sensors are defined in `src/red_gz_plugin/models/OakD-Lite/model.sdf` as two
-`type="camera"` sensors under `<link name="camera_link">`. Their intrinsics match `IMX214`:
-
-```xml
-<sensor name="StereoLeft" type="camera">
-  <pose>0.01233 0.075 .01878 0 0 0</pose>
-  <camera>
-    <horizontal_fov>1.274</horizontal_fov>
-    <image>
-      <width>640</width>
-      <height>480</height>
-    </image>
-    <clip>
-      <near>0.1</near>
-      <far>100</far>
-    </clip>
-  </camera>
-  <always_on>1</always_on>
-  <update_rate>30</update_rate>
-  <visualize>true</visualize>
-</sensor>
-<sensor name="StereoRight" type="camera">
-  <pose>0.01233 -0.075 .01878 0 0 0</pose>
-  <camera>
-    <horizontal_fov>1.274</horizontal_fov>
-    <image>
-      <width>640</width>
-      <height>480</height>
-    </image>
-    <clip>
-      <near>0.1</near>
-      <far>100</far>
-    </clip>
-  </camera>
-  <always_on>1</always_on>
-  <update_rate>30</update_rate>
-  <visualize>true</visualize>
-</sensor>
-```
+`type="camera"` sensors under `<link name="camera_link">`. Their intrinsics match `IMX214`.
 
 #### TF Wiring
 
@@ -162,74 +110,7 @@ The rotation is identical to `IMX214` and `StereoOV7251`:
 - pitch = `0`
 - roll = `-90 deg`
 
-Only Y translation differs between the two stereo cameras:
-
-```python
-Node(
-    package="tf2_ros",
-    executable="static_transform_publisher",
-    name="static_tf_base_link_to_StereoLeft",
-    namespace=drone_id,
-    output="screen",
-    arguments=[
-        "--x", "0.13233",
-        "--y", "0.105",
-        "--z", "0.50278",
-        "--yaw", "-1.5707",
-        "--pitch", "0",
-        "--roll", "-1.5707",
-        "--frame-id", f"{drone_id}/base_link",
-        "--child-frame-id", f"{drone_id}/camera_link/StereoLeft",
-    ],
-    parameters=[{"use_sim_time": True}],
-),
-Node(
-    package="tf2_ros",
-    executable="static_transform_publisher",
-    name="static_tf_base_link_to_StereoRight",
-    namespace=drone_id,
-    output="screen",
-    arguments=[
-        "--x", "0.13233",
-        "--y", "-0.045",
-        "--z", "0.50278",
-        "--yaw", "-1.5707",
-        "--pitch", "0",
-        "--roll", "-1.5707",
-        "--frame-id", f"{drone_id}/base_link",
-        "--child-frame-id", f"{drone_id}/camera_link/StereoRight",
-    ],
-    parameters=[{"use_sim_time": True}],
-),
-```
-
-#### ROS Topic Bridging and OpenVINS Input
-
-In `src/red_vio_estimator/launch/vio_estimator.launch.py`, the stereo images are bridged from Gazebo
-and remapped into namespaced ROS topics:
-
-- Gazebo `.../sensor/StereoLeft/image` -> ROS `stereo_left/image`
-- Gazebo `.../sensor/StereoLeft/camera_info` -> ROS `stereo_left/camera_info`
-- Gazebo `.../sensor/StereoRight/image` -> ROS `stereo_right/image`
-- Gazebo `.../sensor/StereoRight/camera_info` -> ROS `stereo_right/camera_info`
-
-The stereo cameras are kept in their own `stereo_bridge` process, separate from the `imu_bridge`.
-This reduces contention from image serialization and callbacks on the timing-critical IMU path.
-
-OpenVINS is then remapped to consume the stereo pair as:
-
-```python
-remappings=[
-    ("/imu0", "imu"),
-    ("/cam0/image_raw", "stereo_left/image"),
-    ("/cam1/image_raw", "stereo_right/image"),
-],
-```
-
-Therefore:
-
-- `cam0` = `StereoLeft`
-- `cam1` = `StereoRight`
+Only Y translation differs between the two stereo cameras.
 
 #### OpenVINS Calibration Configuration
 
@@ -239,93 +120,6 @@ for the stereo pair. Both cameras use the same optical-to-body rotation:
 `R_CtoI = [[0, 0, 1], [-1, 0, 0], [0, -1, 0]]`
 
 Only `p_CinI.y` differs because of the stereo baseline:
-
-```yaml
-cam0:
-  T_imu_cam:
-    - [0.0,  0.0, 1.0,  0.13233]
-    - [-1.0, 0.0, 0.0,  0.105  ]
-    - [0.0, -1.0, 0.0,  0.50278]
-    - [0.0,  0.0, 0.0,  1.0    ]
-  cam_overlaps: [1]
-  camera_model: pinhole
-  distortion_coeffs: [0.0, 0.0, 0.0, 0.0]
-  distortion_model: radtan
-  intrinsics: [432.50, 432.50, 320.0, 240.0]
-  resolution: [640, 480]
-  rostopic: /cam0/image_raw
-
-cam1:
-  T_imu_cam:
-    - [0.0,  0.0, 1.0,  0.13233]
-    - [-1.0, 0.0, 0.0, -0.045  ]
-    - [0.0, -1.0, 0.0,  0.50278]
-    - [0.0,  0.0, 0.0,  1.0    ]
-  cam_overlaps: [0]
-  camera_model: pinhole
-  distortion_coeffs: [0.0, 0.0, 0.0, 0.0]
-  distortion_model: radtan
-  intrinsics: [432.50, 432.50, 320.0, 240.0]
-  resolution: [640, 480]
-  rostopic: /cam1/image_raw
-```
-
-Stereo mode is enabled in `src/red_vio_estimator/config/openvins/estimator_config.yaml`:
-
-```yaml
-use_stereo: true
-max_cameras: 2
-```
-
-#### What Does Not Change
-
-- `IMX214` remains the RGB source for RTAB-Map
-- `StereoOV7251` remains the depth source for RTAB-Map
-- `src/red_perception/launch/perception.launch.py` remains unchanged and continues to bridge only
-  `rgb/image` and `depth/image` for RTAB-Map
-- `src/red_perception/config/rtabmap_params.yaml` does not depend on the OpenVINS stereo pair
-
-#### Verification
-
-To confirm the stereo wiring is working correctly:
-
-1. Confirm Gazebo stereo topics exist:
-
-```bash
-gz topic -l | grep Stereo
-```
-
-Expected:
-
-- `.../sensor/StereoLeft/image`
-- `.../sensor/StereoRight/image`
-
-2. Confirm ROS stereo topics are bridged at about 30 Hz:
-
-```bash
-ros2 topic hz /drone_1/stereo_left/image
-ros2 topic hz /drone_1/stereo_right/image
-```
-
-3. Confirm static TFs are published:
-
-```bash
-ros2 run tf2_tools view_frames
-```
-
-Expected TF edges:
-
-- `drone_1/base_link -> drone_1/camera_link/StereoLeft`
-- `drone_1/base_link -> drone_1/camera_link/StereoRight`
-
-4. Confirm OpenVINS starts publishing odometry after initialization:
-
-```bash
-ros2 topic echo /drone_1/odomimu --once
-```
-
-The stereo images being present is necessary, but the real success criterion is that OpenVINS
-receives `cam0`, `cam1`, and IMU data consistently enough to initialize and publish `odomimu`.
 
 ### 3. Synthetic mode (`vio_source:=synthetic`)
 
@@ -427,72 +221,6 @@ This dependency is resolved through the following dynamics:
    initialization. Upon this event, `odom_adapter.cpp` registers initialization
    (`openvins_origin_initialized_ = true`) and seamlessly hands off odometry from the groundtruth
    bootstrap to the live OpenVINS stream.
-
-## IMU Sensor Model
-
-### Gazebo SDF Configuration
-
-The IMU sensor (`imu_sensor`) in `src/red_gz_plugin/models/x500_base/model.sdf` is configured with
-**zero Gaussian noise** on both angular velocity and linear acceleration:
-
-```xml
-<noise type="gaussian">
-  <mean>0.0</mean>
-  <stddev>0.0</stddev>
-</noise>
-```
-
-This makes the simulated IMU a mathematically perfect sensor — every reading is exact.  There is
-also no bias and no random walk in Gazebo's IMU plugin; bias drift simply does not exist in
-simulation.  The IMU publishes at **250 Hz**.
-
-### Why a Perfect IMU Still Needs Noise Parameters in OpenVINS
-
-Despite the perfect sensor, OpenVINS requires **non-zero** values for all four IMU noise parameters
-in `src/red_vio_estimator/config/openvins/kalibr_imu_chain.yaml`.  These parameters are **not**
-measurements of the physical sensor — they are **EKF tuning knobs** that control the relative
-authority of IMU propagation vs. visual measurements.
-
-#### The underlying math
-
-OpenVINS propagates the EKF state covariance P between camera frames via:
-
-```
-Ṗ = F·P + P·Fᵀ + G·Q·Gᵀ
-```
-
-where Q is the process-noise matrix constructed from the four parameters below.  A larger Q causes
-P to grow faster between visual updates.  The Kalman gain at the next update is:
-
-```
-K = P·Hᵀ · (H·P·Hᵀ + R)⁻¹
-```
-
-If Q = 0 (matching the true zero-noise sensor), P stops growing between frames and K → 0.  Every
-visual measurement is then silently ignored and the estimator runs as pure IMU dead-reckoning —
-which drifts unboundedly because double-integrating acceleration is numerically unstable.
-
-#### Chosen values (intentionally inflated relative to the true sensor)
-
-| Parameter | Value | Rationale |
-|---|---|---|
-| `accelerometer_noise_density` | `1e-6` m/s²/√Hz | Keeps accel propagation uncertainty non-zero so vision has nonzero Kalman gain |
-| `accelerometer_random_walk`   | `1e-7` m/s²/√s  | Prevents accel bias covariance from collapsing; filter stays open to visual bias corrections |
-| `gyroscope_noise_density`     | `1e-7` rad/s/√Hz | Same as above for orientation propagation |
-| `gyroscope_random_walk`       | `1e-8` rad/s/√s  | Same as above for gyro bias state |
-
-The values are kept very small (orders of magnitude below real MEMS IMUs) so the filter still
-highly trusts the IMU — but they are non-zero so the Kalman gain from visual updates remains
-meaningful.
-
-#### Random walk: why it is needed even without physical bias drift
-
-The random walk parameters set the **process noise on the bias states** (b_a and b_g) in the EKF.
-With `1e-10` (the previous values), the bias covariance collapsed to near-zero within the first few
-IMU steps — the filter became infinitely confident in the bias estimate and could not revise it even
-when visual residuals demanded a correction.  The current values (`1e-7` / `1e-8`) keep the bias
-covariance large enough that visual updates can influence the bias estimate, without making the
-filter so uncertain about biases that it chases noise.
 
 ## Useful Commands
 
@@ -655,6 +383,12 @@ average rate: 196.888
 average rate: 199.207
         min: 0.001s max: 0.174s std dev: 0.00841s window: 600
 ```
+
+- Get the Real Time Factor (RTF) of the simulation:
+```
+gz topic -e -t /stats
+```
+Note that when the Gazebo GUI is enabled, the RTF will drop massively from 100% to 30%.
 
 - List all Gazebo topics:
 ```
