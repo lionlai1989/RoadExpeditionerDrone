@@ -1,3 +1,0 @@
-[submodule "src/open_vins"]
-	path = src/open_vins
-	url = https://github.com/lionlai1989/open_vins.git

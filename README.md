@@ -66,26 +66,64 @@ src/
 
 ---
 
+## Grab the World
+
+Grab the simulation world
+   [here](https://drive.google.com/file/d/14_7dYjFfjNmqW4hYJAOBKtPSC8jPMvhD/view?usp=sharing),
+   unzip it, and move the `worlds/` folder into `src/red_bringup/`.
+
 ## How to run
 
-- Grab the simulation world
-  [here](https://drive.google.com/file/d/14_7dYjFfjNmqW4hYJAOBKtPSC8jPMvhD/view?usp=sharing), unzip
-  it, and move the `worlds/` folder into `src/red_bringup/`.
+Open this repository with Dev Containers in VS Code and do all builds inside the container.
 
-- Initialize git submodule OpenVINS at `src/open_vins` before building
-    ```bash
-    git submodule update --init --recursive
-    ```
+The main workspace folder inside the container is:
 
-- Build and exec into the container
+```text
+/home/lion/RoadExpeditionerDrone
+```
 
-- Build the workspace and launch
-    ```bash
-    source /opt/ros/humble/setup.bash \
-    && colcon build --base-paths src --symlink-install --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-    && source install/setup.bash \
-    && ros2 launch red_bringup simulation.launch.py world_path:=src/red_bringup/worlds/animal/single_layer_maze.world world_name:=single_layer_maze_world gazebo_gui:=false
-    ```
+### Build OpenVINS
+
+OpenVINS lives in a separate sibling workspace at `/home/lion/openvins_ws`, independent of this
+repository. Populate and build it once after cloning:
+
+```bash
+source /opt/ros/humble/setup.bash \
+&& mkdir -p /home/lion/openvins_ws \
+&& vcs import /home/lion/openvins_ws < /home/lion/RoadExpeditionerDrone/third_party.repos \
+&& cd /home/lion/openvins_ws \
+&& rosdep update \
+&& rosdep install --from-paths src --ignore-src -r -y \
+&& colcon build --symlink-install --parallel-workers $(nproc) --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+```
+
+### Build RoadExpeditionerDrone
+
+```bash
+source /opt/ros/humble/setup.bash \
+&& source /home/lion/openvins_ws/install/setup.bash \
+&& cd /home/lion/RoadExpeditionerDrone \
+&& colcon build --base-paths src --symlink-install --parallel-workers $(nproc) --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+```
+
+### Running the Simulation
+
+Source the workspaces in this order before launching:
+
+```bash
+source /opt/ros/humble/setup.bash \
+&& source /home/lion/openvins_ws/install/setup.bash \
+&& source /home/lion/RoadExpeditionerDrone/install/setup.bash
+```
+
+Launch:
+
+```bash
+ros2 launch red_bringup simulation.launch.py \
+  world_path:=src/red_bringup/worlds/animal/single_layer_maze.world \
+  world_name:=single_layer_maze_world \
+  gazebo_gui:=false
+```
 
 ---
 

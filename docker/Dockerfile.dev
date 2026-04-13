@@ -41,6 +41,7 @@ RUN add-apt-repository universe && apt update \
     ros-${ROS_DISTRO}-desktop \
     python3-colcon-common-extensions \
     python3-rosdep \
+    python3-vcstool \
     # Needed by message/interface packages that use rosidl generators. but ros-${ROS_DISTRO}-desktop should include it
     ros-${ROS_DISTRO}-rosidl-default-generators \
     # Needed by rtabmap / nav2 plugins (e.g., nav2_costmap_2d)
