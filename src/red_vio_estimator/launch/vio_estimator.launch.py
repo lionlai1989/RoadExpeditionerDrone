@@ -226,7 +226,6 @@ def generate_launch_description():
         parameters=[
             {
                 "use_sim_time": True,
-                "verbosity": "WARNING",
                 "config_path": openvins_config_path,
                 "publish_global_to_imu_tf": False,
                 "publish_calibration_tf": False,
