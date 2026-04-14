@@ -266,13 +266,12 @@ def generate_launch_description():
         condition=UnlessCondition(LaunchConfiguration("gazebo_gui")),
     )
 
+    clock_bridge_config = str(Path(pkg_red_bringup) / "config" / "clock_bridge.yaml")
     ros_gz_bridge_clock = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
         name="ros_gz_bridge_clock",
-        arguments=[
-            "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
-        ],
+        parameters=[{"config_file": clock_bridge_config}],
         output="screen",
     )
 
